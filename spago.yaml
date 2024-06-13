@@ -1,0 +1,16 @@
+workspace:
+  extraPackages: {}
+  packageSet:
+    registry: 50.11.0
+package:
+  dependencies:
+  - unicode
+  name: jsinc-parser
+  test:
+    main: Test.Main
+    censorTestWarnings:
+      - ImplicitQualifiedImportReExport
+      - ImplicitQualifiedImport
+    dependencies:
+      - spec
+      - assert
