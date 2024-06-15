@@ -1,105 +1,285 @@
-module Test.Main where
+module Test.Main
+  ( main
+  )
+  where
 
 import Prelude
 
 import Control.Fix (fix)
-import Control.Json.Parser (parseJsonT, parseJsonMoreDataT, parseJsonNextValueT)
-import Data.Either (either)
-import Data.Tuple (Tuple(Tuple))
+import Control.Json.Parser (Event(..), ParseException(..), parseJsonMoreDataT, parseJsonNextValueT, parseJsonT)
+import Data.Char (fromCharCode)
+import Data.Either (Either(..), either)
+import Data.Maybe (fromMaybe)
+import Data.Tuple (Tuple(..))
 import Effect (Effect)
 import Effect.Class.Console (log)
+import Test.Assert (assertEqual, assertTrue)
+import Data.String.CodePoints (codePointFromChar, fromCodePointArray)
 
 logShow str a = log $ str <> ": " <> show a
 
 main :: Effect Unit
 main = do
-  log "test"
+  log "fix"
+  assertEqual
+    { actual: (fix (\ fib n ->
+        if n < 3
+        then 1
+        else fib(n - 1) + fib(n - 2)) 7
+      )
+    , expected: 13
+    }
 
-  logShow "fix" $ fix (\ fib n ->
-    if n < 3
-    then 1
-    else fib(n - 1) + fib(n - 2)) 7
+  Tuple result (Tuple parseState _) <- parseJsonT " nul"
+  assertEqual
+    { actual: result
+    , expected: Left EOF
+    }
 
-  stateAndResult@(Tuple result (Tuple parseState _)) <- parseJsonT " nul"
-  logShow "main1" stateAndResult
-  either (\ e -> parseJsonMoreDataT parseState "l " >>= logShow "main1.1") (const $ log "Should have been an error!") result
+  Tuple result state <- parseJsonMoreDataT parseState "l "
+  assertEqual
+    { actual: result
+    , expected: Right ENull
+    }
 
-  stateAndResult@(Tuple result (Tuple parseState _)) <- parseJsonT "\tfalse \n"
-  logShow "main2" stateAndResult
+  Tuple result _ <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Left Done
+    }
 
-  stateAndResult@(Tuple result (Tuple parseState _)) <- parseJsonT "\rtrue"
-  logShow "main3" stateAndResult
+  Tuple result _ <- parseJsonT "\tfalse \n"
+  assertEqual
+    { actual: result
+    , expected: Right (EBool false)
+    }
 
-  stateAndResult@(Tuple result state) <- parseJsonT "\"rtr\\u0035\\nue\""
-  logShow "main6" stateAndResult
-  either (logShow "main6.1") (const $ do
-      stateAndResult@(Tuple result state) <- parseJsonNextValueT state
-      logShow "main6.2.2" stateAndResult
-      either (logShow "main6.2.2.1") (const $ parseJsonNextValueT state >>= logShow "main6.2.2.2") result
-    ) result
+  Tuple result _ <- parseJsonT "\ttrue"
+  assertEqual
+    { actual: result
+    , expected: Right (EBool true)
+    }
 
-  stateAndResult@(Tuple result state) <- parseJsonT "\"rtr\\u00"
-  logShow "main6" stateAndResult
-  either (logShow "main6.1") (const $ do
-      stateAndResult@(Tuple result state) <- parseJsonNextValueT state
-      logShow "main6.2.2" stateAndResult
-      either (logShow "main6.2.2.1") (const $ do
-        stateAndResult@(Tuple result (Tuple parseState _)) <- parseJsonNextValueT state
-        logShow "main6.2.2.2" stateAndResult
-        either (\ e -> do
-          stateAndResult@(Tuple result state) <- parseJsonMoreDataT parseState "35ue\" "
-          logShow "main5.2" stateAndResult
-          either (logShow "main5.2.1") (const $ parseJsonNextValueT state >>= logShow "main5.2.2") result
-        ) (const $ log "Should have been an error!") result
-      ) result
-    ) result
+  Tuple result state <- parseJsonT "\"\\ud800\\udc00\""
+  assertEqual
+    { actual: result
+    , expected: Right EStringStart
+    }
 
-  parseJsonT "0" >>= logShow "main4"
+  Tuple result state <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right (EString "\xd800\xdc00")
+    }
 
-  stateAndResult@(Tuple result state) <- parseJsonT "[]"
-  logShow "main4" stateAndResult
-  either (logShow "main4.1") (const $ parseJsonNextValueT state >>= logShow "main4.2") result
+  Tuple result state <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right EStringEnd
+    }
 
-  stateAndResult@(Tuple result state) <- parseJsonT "[ null ]"
-  logShow "main5" stateAndResult
-  either (logShow "main5.1") (const $ do
-      stateAndResult@(Tuple result state) <- parseJsonNextValueT state
-      logShow "main5.2" stateAndResult
-      either (logShow "main5.2.1") (const $ parseJsonNextValueT state >>= logShow "main5.2.2") result
-    ) result
+  Tuple result _ <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Left Done
+    }
 
-  stateAndResult@(Tuple result state) <- parseJsonT "[ true, null ]"
-  logShow "main6" stateAndResult
-  either (logShow "main6.1") (const $ do
-      stateAndResult@(Tuple result state) <- parseJsonNextValueT state
-      logShow "main6.2.2" stateAndResult
-      either (logShow "main6.2.2.1") (const $ do
-        stateAndResult@(Tuple result state) <- parseJsonNextValueT state
-        logShow "main6.2.2.2" stateAndResult
-        either (logShow "main6.2.2.2.1") (const $ parseJsonNextValueT state >>= logShow "main6.2.2.2.2") result
-      ) result
-    ) result
+  Tuple result state <- parseJsonT "\"rtr\\u0035\\nue\""
+  assertEqual
+    { actual: result
+    , expected: Right EStringStart
+    }
 
-  stateAndResult@(Tuple result state) <- parseJsonT "\r{ \t}"
-  logShow "main7" stateAndResult
-  either (logShow "main7.1") (const $ parseJsonNextValueT state >>= logShow "main7.2") result
+  Tuple result state <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right (EString "rtr5\nue")
+    }
 
-  stateAndResult@(Tuple result state) <- parseJsonT "\r{\"test\": null \t}"
-  logShow "main8" stateAndResult
-  either (logShow "main8.1") (const $ do
-      stateAndResult@(Tuple result state) <- parseJsonNextValueT state
-      logShow "main8.2" stateAndResult
-      either (logShow "main8.2.1") (const $ do
-        stateAndResult@(Tuple result state) <- parseJsonNextValueT state
-        logShow "main8.2.2" stateAndResult
-        either (logShow "main8.2.2.1") (const $ do
-          stateAndResult@(Tuple result state) <- parseJsonNextValueT state
-          logShow "main8.2.2.2" stateAndResult
-          either (logShow "main8.2.2.2.1") (const $ do
-            stateAndResult@(Tuple result state) <- parseJsonNextValueT state
-            logShow "main8.2.2.2.2" stateAndResult
-            either (logShow "main8.2.2.2.2.1") (const $ parseJsonNextValueT state >>= logShow "main8.2.2.2.2.2") result
-          ) result
-        ) result
-      ) result
-    ) result
+  Tuple result state <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right EStringEnd
+    }
+
+  Tuple result _ <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Left Done
+    }
+
+  Tuple result state <- parseJsonT "\"rtr\\u00"
+  assertEqual
+    { actual: result
+    , expected: Right EStringStart
+    }
+
+  Tuple result state <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right (EString "rtr")
+    }
+
+  Tuple result (Tuple parseState _) <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Left EOF
+    }
+
+  Tuple result state <- parseJsonMoreDataT parseState "35ue\" "
+  assertEqual
+    { actual: result
+    , expected: Right (EString "5ue")
+    }
+
+  Tuple result state <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right EStringEnd
+    }
+
+  Tuple result _ <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Left Done
+    }
+
+  Tuple result _ <- parseJsonT "0 "
+  assertEqual
+    { actual: result
+    , expected: Right (ENumber 0.0)
+    }
+
+  Tuple result _ <- parseJsonT "0.0 "
+  assertEqual
+    { actual: result
+    , expected: Right (ENumber (-0.0e+0))
+    }
+
+  Tuple result _ <- parseJsonT "-0.0 "
+  assertEqual
+    { actual: result
+    , expected: Right (ENumber 0.0e-3)
+    }
+
+  Tuple result _ <- parseJsonT "-0.0e+0 "
+  assertEqual
+    { actual: result
+    , expected: Right (ENumber (-0.0))
+    }
+
+  Tuple result _ <- parseJsonT "0.0e-03 "
+  assertEqual
+    { actual: result
+    , expected: Right (ENumber 0.0)
+    }
+
+  Tuple result _ <- parseJsonT "0.125e+0022 "
+  assertEqual
+    { actual: result
+    , expected: Right (ENumber 0.125e22)
+    }
+
+  Tuple result _ <- parseJsonT "-0.125e-0022 "
+  assertEqual
+    { actual: result
+    , expected: Right (ENumber (-0.125e-22))
+    }
+
+  Tuple result state <- parseJsonT "[]"
+  assertEqual
+    { actual: result
+    , expected: Right EArrayStart
+    }
+
+  Tuple result _ <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right EArrayEnd
+    }
+
+  Tuple result state <- parseJsonT "[ null ]"
+  assertEqual
+    { actual: result
+    , expected: Right EArrayStart
+    }
+
+  Tuple result state <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right ENull
+    }
+
+  Tuple result _ <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right EArrayEnd
+    }
+
+  Tuple result state <- parseJsonT "[ true, null ]"
+
+  Tuple result state <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right (EBool true)
+    }
+
+  Tuple result state <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right ENull
+    }
+
+  Tuple result _ <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right EArrayEnd
+    }
+
+  Tuple result state <- parseJsonT "\r{ \t}"
+  assertEqual
+    { actual: result
+    , expected: Right EObjectStart
+    }
+
+  Tuple result _ <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right EObjectEnd
+    }
+
+  Tuple result state <- parseJsonT "\r{\"test\": null \t}"
+  assertEqual
+    { actual: result
+    , expected: Right EObjectStart
+    }
+
+  Tuple result state <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right (EStringStart)
+    }
+
+  Tuple result state <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right (EString "test")
+    }
+
+  Tuple result state <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right (EStringEnd)
+    }
+
+  Tuple result state <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right ENull
+    }
+
+  Tuple result _ <- parseJsonNextValueT state
+  assertEqual
+    { actual: result
+    , expected: Right EObjectEnd
+    }

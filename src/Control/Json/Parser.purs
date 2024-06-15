@@ -6,6 +6,7 @@ module Control.Json.Parser
   , ParseException(..)
   , ParseState
   , SourceState(..)
+  , endParseT
   , parseJsonMoreDataT
   , parseJsonNextValueT
   , parseJsonT
@@ -15,7 +16,7 @@ module Control.Json.Parser
 import Prelude
 
 import Control.Fix (fix)
-import Control.Monad.Except (class MonadError, catchError, runExceptT, throwError)
+import Control.Monad.Except (catchError, runExceptT, throwError)
 import Control.Monad.Error.Class (class MonadThrow)
 import Control.Monad.State (class MonadState, get, modify, runStateT)
 import Data.Array (snoc)
@@ -25,11 +26,11 @@ import Data.CodePoint.Unicode (decDigitToInt, hexDigitToInt, isControl, isSpace)
 import Data.Either (Either)
 import Data.Generic.Rep (class Generic)
 import Data.Int (toNumber)
-import Data.Maybe (Maybe, fromMaybe, maybe)
+import Data.Maybe (fromMaybe, maybe)
 import Data.Number (pow)
 import Data.Show.Generic (genericShow)
-import Data.String (CodePoint, singleton)
-import Data.String.CodeUnits (charAt)
+import Data.String (singleton)
+import Data.String.CodeUnits (charAt, slice)
 import Data.String.CodePoints (codePointFromChar, fromCodePointArray)
 import Data.Tuple (Tuple(Tuple), fst, snd)
 
@@ -167,20 +168,36 @@ getSourceState = snd <$> get
 getParseState :: forall m a b. MonadState (Tuple a b) m => m a
 getParseState = fst <$> get
 
+putParseState :: forall a b m. MonadState (Tuple a b) m => a -> m Unit
+putParseState parseState = modify (\ (Tuple _ srcState) -> Tuple parseState srcState) # void
+
 peek :: forall m b a. MonadState (Tuple a SourceState) m => MonadThrow ParseException m => (Char -> m b) -> m b
 peek p = do
   SourceState str pos <- getSourceState
   maybe (throwError EOF) p $ charAt pos str
 
+stateTransitionFromEndValue :: forall a m. MonadState (Tuple ParseState a) m => MonadThrow ParseException m => ParseState -> m Unit
+stateTransitionFromEndValue parentState =
+  let next = putParseState $ PPostValue parentState in
+  case parentState of
+    PRoot -> next
+    PArray _ -> next
+    PObject _ -> next
+    _ -> throwError FlogTheDeveloper
+
+numberEnd :: forall m a. Functor m => MonadState (Tuple ParseState a) m => MonadThrow ParseException m => Number -> ParseState -> m Event
+numberEnd num parentState = ENumber num <$ stateTransitionFromEndValue parentState
+
+applySign :: forall a. Ring a => Boolean -> a -> a
+applySign isPos = if isPos then identity else negate
+
 parseJsonNextValueT :: forall m. Monad m => Tuple ParseState SourceState -> m (Tuple (Either ParseException Event) (Tuple ParseState SourceState))
 parseJsonNextValueT =
   runStateT (runExceptT $ fix \ parse -> do
-      let putParseState parseState = modify (\ (Tuple _ srcState) -> Tuple parseState srcState) # void
-          anyChar = peek \ c ->
+      let anyChar = peek \ c ->
               c <$ modify \ (Tuple parseState (SourceState str pos)) ->
                 Tuple parseState <<< SourceState str $ pos + 1
           char c = do
-            let cp = codePointFromChar c
             SourceState str pos <- getSourceState
             maybe (throwError EOF) (\ c' ->
                 if c == c'
@@ -193,13 +210,6 @@ parseJsonNextValueT =
                 if isSpace $ codePointFromChar c
                 then anyChar *> recurse
                 else p
-          stateTransitionFromEndValue parentState =
-            let next = putParseState $ PPostValue parentState in
-            case parentState of
-              PRoot -> next
-              PArray _ -> next
-              PObject _ -> next
-              _ -> throwError FlogTheDeveloper
           literalParse lit litPos parentState =
             fix (\ recurse litPos' ->
                 let litStr = case lit of
@@ -211,7 +221,7 @@ parseJsonNextValueT =
                     (case lit of
                       LTrue -> EBool true
                       LFalse -> EBool false
-                      _ -> ENull)
+                      LNull -> ENull)
                       <$ stateTransitionFromEndValue parentState
                   ) (\ c ->
                     char c *> putParseState (PLiteral lit (litPos' + 1) parentState) *> recurse (litPos' + 1)
@@ -293,20 +303,21 @@ parseJsonNextValueT =
         PString isName charRead parentState ->
           fix ( \ recurse charRead' cpArr ->
             catchError
-              ( peek \ c ->
-                let cp = codePointFromChar c in
+              ( let nextCharRead cRead cpArr' = anyChar *> putParseState (PString isName cRead parentState) *> recurse cRead cpArr'
+                    peekChar p = peek \ c -> p c $ codePointFromChar c
+                in
                 case charRead' of
-                  CRClean ->
+                  CRClean -> peekChar \ c cp ->
                     case c of
-                      '\\' -> anyChar *> putParseState (PString isName CREscape parentState) *> recurse CREscape cpArr
+                      '\\' -> nextCharRead CREscape cpArr
                       '"' -> if A.length cpArr > 0
                         then pure <<< EString $ fromCodePointArray cpArr
                         else EStringEnd <$ anyChar <* putParseState ((if isName then PPostName else PPostValue) parentState)
                       _ -> if isControl cp
-                        then throwError $ Msg ""
+                        then throwError $ Msg "Unescaped characters are not allowed."
                         else snoc cpArr cp <$ anyChar >>= recurse charRead'
-                  CREscape ->
-                    let esc c' = anyChar *> putParseState (PString isName CRClean parentState) *> (snoc cpArr (codePointFromChar c') # recurse CRClean) in
+                  CREscape -> peekChar \ c cp ->
+                    let esc c' = nextCharRead CRClean $ snoc cpArr (codePointFromChar c') in
                     case c of
                       '"' -> esc '"'
                       '\\' -> esc '\\'
@@ -316,18 +327,15 @@ parseJsonNextValueT =
                       'n' -> esc '\n'
                       'r' -> esc '\r'
                       't' -> esc '\t'
-                      'u' -> putParseState (PString isName (CRUnicode 0 0) parentState) *> anyChar *> recurse (CRUnicode 0 0) cpArr
+                      'u' -> nextCharRead (CRUnicode 0 0) cpArr
                       _ -> throwError <<< Msg $ "Invalid escape sequence: \"\\" <> singleton cp <> "\""
-                  CRUnicode charCount value -> maybe
-                      (throwError <<< Msg $ "Invalid escape sequence: \"\\" <> singleton cp <> "\"")
-                      (\ digit ->
-                        let value' = value * 16 + digit in
-                        anyChar *> if charCount == 3
-                          then putParseState (PString isName CRClean parentState) *>
-                            (recurse CRClean <<< snoc cpArr <<< codePointFromChar <<< fromMaybe '\xfffd' $ fromCharCode value')
-                          else putParseState (PString isName (CRUnicode (charCount + 1) value') parentState) *> recurse (CRUnicode (charCount + 1) value') cpArr
-                      )
-                      $ hexDigitToInt cp
+                  CRUnicode charCount value ->
+                        if charCount == 4
+                        then putParseState (PString isName CRClean parentState) *> recurse CRClean (snoc cpArr <<< codePointFromChar <<< fromMaybe '\xfffd' $ fromCharCode value)
+                        else peekChar \ c cp -> maybe
+                          (throwError <<< Msg $ "Invalid hex digit: \"\\" <> singleton cp <> "\"")
+                          (\ digit -> nextCharRead (CRUnicode (charCount + 1) $ value * 16 + digit) cpArr)
+                          $ hexDigitToInt cp
             )
             (\ e ->
               if A.length cpArr > 0
@@ -377,10 +385,8 @@ parseJsonNextValueT =
                     anyChar
                       *> putParseState (PNumber numberRead'' parentState)
                       *> numberParse numberRead''
-                  expStart isPos num = recurse <<< NRExpInd $ (if isPos then identity else negate) num
+                  expStart isPos num = recurse <<< NRExpInd $ applySign isPos num
                   fracF n1 n2 = (n1 + n2) / 10.0
-                  numberEnd num = ENumber num <$ stateTransitionFromEndValue parentState
-                  applySign isPos = if isPos then identity else negate
                   digitMaybe no yes = maybe no (yes <<< toNumber) $ decDigitCharToInt c
               in
               case numberRead' of
@@ -389,31 +395,33 @@ parseJsonNextValueT =
                     (throwError $ Msg "")
                     (recurse <<< NRWholeNum false)
                 NRWholeNum isPos num ->
+                  let intNum = numberEnd (applySign isPos num) parentState in
                   if num == 0.0
                   then
                     case c of
                       '.' -> recurse $ NRDecPoint isPos num
                       'E' -> expStart isPos num
                       'e' -> expStart isPos num
-                      _ -> numberEnd $ applySign isPos num
+                      _ -> intNum
                   else
                     case c of
                       '.' -> recurse $ NRDecPoint isPos num
                       'E' -> expStart isPos num
                       'e' -> expStart isPos num
                       _ -> digitMaybe
-                        (numberEnd $ applySign isPos num)
+                        intNum
                         (recurse <<< NRWholeNum isPos <<< add (num * 10.0))
                 NRDecPoint isPos num ->
                   digitMaybe
                     (throwError $ Msg "")
                     (recurse <<< NRFrac isPos num <<< fracF)
                 NRFrac isPos num accF ->
+                  let expStart' = expStart isPos $ num + accF 0.0 in
                   digitMaybe
                     ( case c of
-                        'E' -> expStart isPos num
-                        'e' -> expStart isPos num
-                        _ -> numberEnd $ num + accF 0.0
+                        'E' -> expStart'
+                        'e' -> expStart'
+                        _ -> numberEnd (applySign isPos $ num + accF 0.0) parentState
                     )
                     (recurse <<< NRFrac isPos num <<< compose accF <<< fracF)
                 NRExpInd num ->
@@ -431,8 +439,8 @@ parseJsonNextValueT =
                     (recurse <<< NRExp num isPos)
                 NRExp num isPos exp ->
                   digitMaybe
-                    (numberEnd $ num * pow 10.0 (applySign isPos exp))
-                    (recurse <<< NRExp num true <<< add (exp * 10.0))
+                    (numberEnd (num * pow 10.0 (applySign isPos exp)) parentState)
+                    (recurse <<< NRExp num isPos <<< add (exp * 10.0))
                 ) numberRead
     )
 
@@ -441,3 +449,40 @@ parseJsonMoreDataT parseState str = parseJsonNextValueT <<< Tuple parseState $ S
 
 parseJsonT :: forall m. Monad m => String -> m (Tuple (Either ParseException Event) (Tuple ParseState SourceState))
 parseJsonT = parseJsonMoreDataT PRoot
+
+endParseT :: forall m a. MonadState (Tuple ParseState a) m => MonadThrow ParseException m => m Event
+endParseT = do
+  parseState <- getParseState
+  case parseState of
+    PRoot -> throwError $ Msg "Missing a value (null, Boolean, string, number, array, or object)."
+    PArrayStart _ -> throwError $ Msg "Incomplete array. No close bracket found."
+    PObjectStart _ -> throwError $ Msg "Incomplet object. No close curly bracket found."
+    PArray _ -> throwError $ Msg "Missing a value (null, Boolean, string, number, array, or object)."
+    PObject _ -> throwError $ Msg "Missing a property name in the form of a string."
+    PString _ charRead _ ->
+      case charRead of
+        CRClean -> throwError $ Msg "Incomplete string. Missing closing double quote"
+        CREscape -> throwError $ Msg "Incomplete escape. Expected \", \\, /, b, f, n, r, t, or u"
+        CRUnicode charCount _ -> throwError <<< Msg $ "Incomplete unicode escape. Expected 4 hexidecimal digits. Found only " <> show charCount <> "."
+    PLiteral lit charCount _ -> throwError <<< Msg $ "Invalid value: "
+      <> slice 0 charCount case lit of
+        LTrue -> "true"
+        LFalse -> "false"
+        LNull -> "null"
+    PPostName _ -> throwError $ Msg "Incomplete property. Missing value."
+    PPostNameTermin _ -> throwError $ Msg "Incomplete property. Missing value."
+    PPostValue parentState ->
+      case parentState of
+        PRoot -> throwError Done
+        PArray _ -> throwError $ Msg "Incomplete array. No close bracket found."
+        PObject _ -> throwError $ Msg "Incomplet object. No close curly bracket found."
+        _ -> throwError FlogTheDeveloper
+    PNumber numberRead parentState ->
+      case numberRead of
+        NRNegSign -> throwError $ Msg ""
+        NRWholeNum isPos num -> numberEnd (applySign isPos num) parentState
+        NRDecPoint _ _ -> throwError $ Msg ""
+        NRFrac isPos num accF -> numberEnd (applySign isPos $ num + accF 0.0) parentState
+        NRExpInd _ -> throwError $ Msg ""
+        NRExpSign _ _ -> throwError $ Msg ""
+        NRExp num isPos exp -> numberEnd (num * pow 10.0 (applySign isPos exp)) parentState
