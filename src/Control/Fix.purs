@@ -1,3 +1,3 @@
 module Control.Fix where
 
-foreign import fix :: forall a. (a -> a) -> a
+foreign import fix ∷ ∀ a. (a → a) → a
