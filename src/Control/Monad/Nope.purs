@@ -3,6 +3,7 @@ module Control.Monad.Nope
   , module Control.Monad.Maybe.Trans
   , module Control.Monad.Nope.Class
   , module Control.Monad.Nope.Trans
+  , mapNope
   , runNope
   )
   where
@@ -12,7 +13,7 @@ import Prelude
 import Control.Monad.Maybe.Trans (MaybeT, runMaybeT)
 import Control.Monad.Nope.Class (class MonadNope, class MonadNuhUh, attempt, liftMaybe, nope, withResource, yup)
 import Control.Monad.Nope.Trans (NopeT, mapNopeT, nopeEither, nopeT, runNopeT)
-import Data.Identity (Identity)
+import Data.Identity (Identity(Identity))
 import Data.Maybe (Maybe)
 import Data.Newtype (unwrap)
 
@@ -33,5 +34,5 @@ runNope :: forall a. Nope a -> Maybe a
 runNope = unwrap <<< runMaybeT
 
 -- | Transform the unwrapped computation using the given function.
--- mapNope :: forall a b. (Maybe a -> Maybe b) -> Nope a -> Nope b
--- mapNope f = mapNopeT (Identity <<< f <<< unwrap)
+mapNope :: forall a b. (Maybe a -> Maybe b) -> Nope a -> Nope b
+mapNope f = mapNopeT (Identity <<< f <<< unwrap)

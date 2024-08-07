@@ -3,27 +3,26 @@
   "scripts": {
     "clean": "rimraf output && rimraf .spago",
     "postinstall": "spago install",
-
     "node-version": "echo -n \"nodejs version: \" && node --version",
     "npm-version": "echo -n \"npm version: \" && npm --version",
     "esbuild-version": "echo -n \"esbuild version: \" && esbuild --version",
     "psa-version": "echo -n \"purescript-psa version: \" && psa --version",
     "purs-tidy-version": "echo -n \"purs-tidy version: \" && purs-tidy --version",
     "purs-version": "echo -n \"purescript version: \" && purs --version",
+    "rimraf-version": "echo -n \"rimraf version: \" && rimraf --version",
     "spago-version": "echo -n \"spago version: \" && spago --version",
-    "versions": "npm run -s node-version && npm run -s npm-version && npm run -s esbuild-version && npm run -s purs-version && npm run -s psa-version && npm run -s purs-tidy-version && npm run -s spago-version",
-
+    "versions": "npm run -s node-version && npm run -s npm-version && npm run -s esbuild-version && npm run -s purs-version && npm run -s psa-version && npm run -s purs-tidy-version && npm run -s rimraf-version && npm run -s spago-version",
     "build": "spago build -p jsinc-parser",
     "format": "purs-tidy format-in-place src test",
     "check-formatting": "purs-tidy check src test",
     "test": "spago test"
   },
   "devDependencies": {
-    "esbuild": "^0.14.38",
+    "esbuild": "^0.23.0",
     "purescript": "^0.15.15",
-    "purescript-psa": "^0.8.2",
-    "purs-tidy": "^0.7.2",
-    "rimraf": "^3.0.2",
-    "spago": "^0.93.0"
+    "purescript-psa": "^0.9.0",
+    "purs-tidy": "^0.11.0",
+    "rimraf": "^6.0.1",
+    "spago": "^0.93.37"
   }
 }

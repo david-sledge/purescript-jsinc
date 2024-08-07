@@ -1,7 +1,7 @@
 workspace:
   extraPackages: {}
   packageSet:
-    registry: 50.11.0
+    registry: 56.4.0
 package:
   dependencies:
   - unicode

@@ -19,8 +19,6 @@ import Control.Monad.State (StateT(StateT))
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Writer (WriterT(WriterT))
 import Data.Maybe (Maybe(..), maybe)
-import Effect (Effect)
-import Effect.Exception as Ex
 
 -- | The `MonadNuhUh` type class represents those monads which support Nothing via
 -- | `nope`, where `nope` halts.

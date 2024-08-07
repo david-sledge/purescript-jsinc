@@ -10,8 +10,7 @@ module Control.Monad.Nope.Trans
 import Prelude
 
 import Control.Monad.Maybe.Trans (MaybeT(MaybeT))
-import Control.Monad.Nope.Class (class MonadNuhUh, class MonadNope, nope, yup)
-import Data.Maybe (Maybe(Just, Nothing), maybe)
+import Data.Maybe (Maybe(Nothing))
 import Data.Either (Either, either)
 
 -- | A monad transformer which adds failures to other monads, in the same way

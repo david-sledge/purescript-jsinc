@@ -8,7 +8,11 @@ module Control.Json.Parser
   , SourceState(..)
   , endParseT
   , initParseState
+  , parseMoreJsonStringT
+  , parseMoreJsonDataT
   , parseJsonNextValueT
+  , parseJsonStringT
+  , parseJsonT
   )
   where
 
@@ -17,6 +21,7 @@ import Prelude
 import Control.Fix (fix)
 import Control.Monad.Except (ExceptT, catchError, runExceptT, throwError)
 import Control.Monad.Error.Class (class MonadThrow)
+import Control.Monad.Maybe.Trans (MaybeT)
 import Control.Monad.Nope (NopeT, runNopeT)
 import Control.Monad.State (class MonadState, StateT, get, modify, runStateT)
 import Control.Monad.Trans.Class (lift)
@@ -136,7 +141,7 @@ instance showParseState ∷ Show ParseState where
   show (PPostNameTermin parseState) = "PPostNameTermin " <> showPStateHelper parseState
   show (PPostValue parseState) = "PPostValue " <> showPStateHelper parseState
 
-initParseState :: ParseState
+initParseState ∷ ParseState
 initParseState = PRoot
 
 data SourceState = SourceState String Int
@@ -190,12 +195,6 @@ numberEnd num parentState = ENumber num <$ stateTransitionFromEndValue parentSta
 
 applySign ∷ ∀ a. Ring a ⇒ Boolean → a → a
 applySign isPos = if isPos then identity else negate
-
--- parseJsonMoreDataT ∷ ∀ m. Monad m ⇒ ParseState → String → m (Tuple (Either ParseException Event) (Tuple ParseState SourceState))
--- parseJsonMoreDataT parseState str = parseJsonNextValueT <<< Tuple parseState $ SourceState str 0
-
--- parseJsonT ∷ ∀ m. Monad m ⇒ String → m (Tuple (Either ParseException Event) (Tuple ParseState SourceState))
--- parseJsonT = parseJsonMoreDataT PRoot
 
 --------------------------------------------------------------------------------
 peek ∷ ∀ m a s c. Monad m ⇒ S.Source s c (NopeT m) ⇒ ExceptT ParseException (StateT (Tuple a s) m) c
@@ -349,7 +348,7 @@ parseJsonNextValueT =
                   CRUnicode charCount value →
                         if charCount == 4
                         then putParseState (PString isName CRClean parentState) *> recurse CRClean (snoc cpArr <<< codePointFromChar <<< fromMaybe '\xfffd' $ fromCharCode value)
-                        else peekChar \ c cp → maybe
+                        else peekChar \ _ cp → maybe
                           (throwError <<< Msg $ "Invalid hex digit: \"\\" <> singleton cp <> "\"")
                           (\ digit → nextCharRead (CRUnicode (charCount + 1) $ value * 16 + digit) cpArr)
                           $ hexDigitToInt cp
@@ -463,9 +462,11 @@ parseJsonNextValueT =
               ) numberRead
     )
 
--- parseJsonMoreDataT parseState str = parseJsonNextValueT <<< Tuple parseState $ SourceState str 0
+parseMoreJsonDataT ∷ ∀ m s. Monad m ⇒ S.Source s Char (MaybeT m) ⇒ ParseState → s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
+parseMoreJsonDataT parseState = parseJsonNextValueT <<< Tuple parseState
 
--- parseJsonT = parseJsonMoreDataT PRoot
+parseJsonT ∷ ∀ m s. Monad m ⇒ S.Source s Char (MaybeT m) ⇒ s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
+parseJsonT = parseMoreJsonDataT initParseState
 
 endParseT ∷ ∀ m a. Monad m ⇒ Tuple ParseState a → m (Tuple (Either ParseException Event) (Tuple ParseState a))
 endParseT = runStateT $ runExceptT do
@@ -473,7 +474,7 @@ endParseT = runStateT $ runExceptT do
   case parseState of
     PRoot → throwError $ Msg "Missing a value (null, Boolean, string, number, array, or object)."
     PArrayStart _ → throwError $ Msg "Incomplete array. No close bracket found."
-    PObjectStart _ → throwError $ Msg "Incomplet object. No close curly bracket found."
+    PObjectStart _ → throwError $ Msg "Incomplete object. No close curly bracket found."
     PArray _ → throwError $ Msg "Missing a value (null, Boolean, string, number, array, or object)."
     PObject _ → throwError $ Msg "Missing a property name in the form of a string."
     PString _ charRead _ →
@@ -492,14 +493,20 @@ endParseT = runStateT $ runExceptT do
       case parentState of
         PRoot → throwError Done
         PArray _ → throwError $ Msg "Incomplete array. No close bracket found."
-        PObject _ → throwError $ Msg "Incomplet object. No close curly bracket found."
+        PObject _ → throwError $ Msg "Incomplete object. No close curly bracket found."
         _ → throwError FlogTheDeveloper
     PNumber numberRead parentState →
       case numberRead of
-        NRNegSign → throwError $ Msg ""
+        NRNegSign → throwError $ Msg "Incomplete number."
         NRWholeNum isPos num → numberEnd (applySign isPos num) parentState
-        NRDecPoint _ _ → throwError $ Msg ""
+        NRDecPoint _ _ → throwError $ Msg "Incomplete number."
         NRFrac isPos num accF → numberEnd (applySign isPos $ num + accF 0.0) parentState
-        NRExpInd _ → throwError $ Msg ""
-        NRExpSign _ _ → throwError $ Msg ""
+        NRExpInd _ → throwError $ Msg "Incomplete exponent."
+        NRExpSign _ _ → throwError $ Msg "Incomplete exponent."
         NRExp num isPos exp → numberEnd (num * pow 10.0 (applySign isPos exp)) parentState
+
+parseJsonStringT :: forall m. Monad m => String -> m (Tuple (Either ParseException Event) (Tuple ParseState (S.SourcePosition (S.InPlaceString String) S.LineColumnPosition)))
+parseJsonStringT str = parseJsonT <<< S.SourcePosition (S.InPlaceString str 0) $ S.LineColumnPosition 0 false 0 0
+
+parseMoreJsonStringT :: forall m. Monad m => Tuple ParseState (S.SourcePosition (S.InPlaceString String) S.LineColumnPosition) -> String -> m (Tuple (Either ParseException Event) (Tuple ParseState (S.SourcePosition (S.InPlaceString String) S.LineColumnPosition)))
+parseMoreJsonStringT (Tuple parseState (S.SourcePosition _ lineColPos)) str = parseJsonNextValueT <<< Tuple parseState $ S.SourcePosition (S.InPlaceString str 0) lineColPos
