@@ -6,7 +6,7 @@ module Test.Main
 import Prelude
 
 import Control.Fix (fix)
-import Control.Json.Parser (Event(..), ParseException(..), endParseT, initParseState, parseJsonNextValueT)
+import Control.Json.Parser (Event(..), ParseException(..), endParseT, initParseState, parseNextJsonValueT)
 import Control.Monad.Nope (runNopeT)
 import Data.Char (fromCharCode)
 import Data.Either (Either(..), either)
@@ -91,7 +91,7 @@ main = do
     , expected: Just (Tuple 'n' $ SourcePosition (InPlaceString "null" 1) (LineColumnPosition 1 false 0 1))
     }
 
-  Tuple result state ← parseJsonNextValueT state
+  Tuple result state ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right ENull
@@ -101,176 +101,176 @@ main = do
       wrap' str = wrap str pos
 
   ------------------------------------------------------------------------------
-  Tuple result (Tuple parseState (SourcePosition _ posi)) ← parseJsonNextValueT <<< Tuple initParseState $ wrap' " nul"
+  Tuple result (Tuple parseState (SourcePosition _ posi)) ← parseNextJsonValueT <<< Tuple initParseState $ wrap' " nul"
   assertEqual
     { actual: result
     , expected: Left EOF
     }
 
-  Tuple result state@(Tuple parseState (SourcePosition _ posi)) ← parseJsonNextValueT <<< Tuple parseState $ wrap "l " posi
+  Tuple result state@(Tuple parseState (SourcePosition _ posi)) ← parseNextJsonValueT <<< Tuple parseState $ wrap "l " posi
   assertEqual
     { actual: result
     , expected: Right ENull
     }
 
-  Tuple result _ ← parseJsonNextValueT state
+  Tuple result _ ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Left Done
     }
 
   ------------------------------------------------------------------------------
-  Tuple result (Tuple parseState (SourcePosition _ posi)) ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "\tfalse \n"
+  Tuple result (Tuple parseState (SourcePosition _ posi)) ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "\tfalse \n"
   assertEqual
     { actual: result
     , expected: Right (EBool false)
     }
 
   ------------------------------------------------------------------------------
-  Tuple result (Tuple parseState (SourcePosition _ posi)) ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "\ttrue"
+  Tuple result (Tuple parseState (SourcePosition _ posi)) ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "\ttrue"
   assertEqual
     { actual: result
     , expected: Right (EBool true)
     }
 
   ------------------------------------------------------------------------------
-  Tuple result state@(Tuple parseState (SourcePosition _ posi)) ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "\"\\ud800\\udc00\""
+  Tuple result state@(Tuple parseState (SourcePosition _ posi)) ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "\"\\ud800\\udc00\""
   assertEqual
     { actual: result
     , expected: Right EStringStart
     }
 
-  Tuple result state ← parseJsonNextValueT state
+  Tuple result state ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right (EString "\xd800\xdc00")
     }
 
-  Tuple result state ← parseJsonNextValueT state
+  Tuple result state ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right EStringEnd
     }
 
-  Tuple result _ ← parseJsonNextValueT state
+  Tuple result _ ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Left Done
     }
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "\"rtr\\u0035\\nue\""
+  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "\"rtr\\u0035\\nue\""
   assertEqual
     { actual: result
     , expected: Right EStringStart
     }
 
-  Tuple result state ← parseJsonNextValueT state
+  Tuple result state ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right (EString "rtr5\nue")
     }
 
-  Tuple result state ← parseJsonNextValueT state
+  Tuple result state ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right EStringEnd
     }
 
-  Tuple result _ ← parseJsonNextValueT state
+  Tuple result _ ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Left Done
     }
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "\"rtr\\u00"
+  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "\"rtr\\u00"
   assertEqual
     { actual: result
     , expected: Right EStringStart
     }
 
-  Tuple result state ← parseJsonNextValueT state
+  Tuple result state ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right (EString "rtr")
     }
 
-  Tuple result (Tuple parseState (SourcePosition _ posi)) ← parseJsonNextValueT state
+  Tuple result (Tuple parseState (SourcePosition _ posi)) ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Left EOF
     }
 
-  Tuple result state ← parseJsonNextValueT <<< Tuple parseState $ wrap "35ue\" " posi
+  Tuple result state ← parseNextJsonValueT <<< Tuple parseState $ wrap "35ue\" " posi
   assertEqual
     { actual: result
     , expected: Right (EString "5ue")
     }
 
-  Tuple result state ← parseJsonNextValueT state
+  Tuple result state ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right EStringEnd
     }
 
-  Tuple result _ ← parseJsonNextValueT state
+  Tuple result _ ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Left Done
     }
 
   ------------------------------------------------------------------------------
-  Tuple result _ ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "0 "
+  Tuple result _ ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "0 "
   assertEqual
     { actual: result
     , expected: Right (ENumber 0.0)
     }
 
   ------------------------------------------------------------------------------
-  Tuple result _ ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "0.0 "
+  Tuple result _ ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "0.0 "
   assertEqual
     { actual: result
     , expected: Right (ENumber (-0.0e+0))
     }
 
   ------------------------------------------------------------------------------
-  Tuple result _ ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "-0.0 "
+  Tuple result _ ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "-0.0 "
   assertEqual
     { actual: result
     , expected: Right (ENumber 0.0e-3)
     }
 
   ------------------------------------------------------------------------------
-  Tuple result _ ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "-0.0e+0 "
+  Tuple result _ ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "-0.0e+0 "
   assertEqual
     { actual: result
     , expected: Right (ENumber (-0.0))
     }
 
   ------------------------------------------------------------------------------
-  Tuple result _ ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "0.0e-03 "
+  Tuple result _ ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "0.0e-03 "
   assertEqual
     { actual: result
     , expected: Right (ENumber 0.0)
     }
 
   ------------------------------------------------------------------------------
-  Tuple result _ ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "0.125e+0022 "
+  Tuple result _ ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "0.125e+0022 "
   assertEqual
     { actual: result
     , expected: Right (ENumber 0.125e22)
     }
 
   ------------------------------------------------------------------------------
-  Tuple result _ ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "-0.125e-0022 "
+  Tuple result _ ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "-0.125e-0022 "
   assertEqual
     { actual: result
     , expected: Right (ENumber (-0.125e-22))
     }
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "-0.125e-0022"
+  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "-0.125e-0022"
   assertEqual
     { actual: result
     , expected: Left EOF
@@ -283,103 +283,103 @@ main = do
     }
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "[]"
+  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "[]"
   assertEqual
     { actual: result
     , expected: Right EArrayStart
     }
 
-  Tuple result _ ← parseJsonNextValueT state
+  Tuple result _ ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right EArrayEnd
     }
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "[ null ]"
+  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "[ null ]"
   assertEqual
     { actual: result
     , expected: Right EArrayStart
     }
 
-  Tuple result state ← parseJsonNextValueT state
+  Tuple result state ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right ENull
     }
 
-  Tuple result _ ← parseJsonNextValueT state
+  Tuple result _ ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right EArrayEnd
     }
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "[ true, null ]"
+  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "[ true, null ]"
 
-  Tuple result state ← parseJsonNextValueT state
+  Tuple result state ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right (EBool true)
     }
 
-  Tuple result state ← parseJsonNextValueT state
+  Tuple result state ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right ENull
     }
 
-  Tuple result _ ← parseJsonNextValueT state
+  Tuple result _ ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right EArrayEnd
     }
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "\r{ \t}"
+  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "\r{ \t}"
   assertEqual
     { actual: result
     , expected: Right EObjectStart
     }
 
-  Tuple result _ ← parseJsonNextValueT state
+  Tuple result _ ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right EObjectEnd
     }
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseJsonNextValueT <<< Tuple initParseState $ wrap' "\r{\"test\": null \t}"
+  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "\r{\"test\": null \t}"
   assertEqual
     { actual: result
     , expected: Right EObjectStart
     }
 
-  Tuple result state ← parseJsonNextValueT state
+  Tuple result state ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right (EStringStart)
     }
 
-  Tuple result state ← parseJsonNextValueT state
+  Tuple result state ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right (EString "test")
     }
 
-  Tuple result state ← parseJsonNextValueT state
+  Tuple result state ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right (EStringEnd)
     }
 
-  Tuple result state ← parseJsonNextValueT state
+  Tuple result state ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right ENull
     }
 
-  Tuple result _ ← parseJsonNextValueT state
+  Tuple result _ ← parseNextJsonValueT state
   assertEqual
     { actual: result
     , expected: Right EObjectEnd

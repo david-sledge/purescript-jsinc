@@ -10,7 +10,7 @@ module Control.Json.Parser
   , initParseState
   , parseMoreJsonStringT
   , parseMoreJsonDataT
-  , parseJsonNextValueT
+  , parseNextJsonValueT
   , parseJsonStringT
   , parseJsonT
   )
@@ -210,8 +210,8 @@ char c = do
   then anyChar
   else throwError <<< Msg $ "Expected '" <> singleton (codePointFromChar c) <> "', found '" <> singleton (codePointFromChar c') <> "'"
 
-parseJsonNextValueT ∷ ∀ m s. Monad m ⇒ S.Source s Char (NopeT m) ⇒ Tuple ParseState s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
-parseJsonNextValueT =
+parseNextJsonValueT ∷ ∀ m s. Monad m ⇒ S.Source s Char (NopeT m) ⇒ Tuple ParseState s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
+parseNextJsonValueT =
   runStateT (runExceptT $ fix \ parse → do
       let whiteSpace p =
             fix \ recurse → do
@@ -463,7 +463,7 @@ parseJsonNextValueT =
     )
 
 parseMoreJsonDataT ∷ ∀ m s. Monad m ⇒ S.Source s Char (MaybeT m) ⇒ ParseState → s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
-parseMoreJsonDataT parseState = parseJsonNextValueT <<< Tuple parseState
+parseMoreJsonDataT parseState = parseNextJsonValueT <<< Tuple parseState
 
 parseJsonT ∷ ∀ m s. Monad m ⇒ S.Source s Char (MaybeT m) ⇒ s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
 parseJsonT = parseMoreJsonDataT initParseState
@@ -509,4 +509,4 @@ parseJsonStringT :: forall m. Monad m => String -> m (Tuple (Either ParseExcepti
 parseJsonStringT str = parseJsonT <<< S.SourcePosition (S.InPlaceString str 0) $ S.LineColumnPosition 0 false 0 0
 
 parseMoreJsonStringT :: forall m. Monad m => Tuple ParseState (S.SourcePosition (S.InPlaceString String) S.LineColumnPosition) -> String -> m (Tuple (Either ParseException Event) (Tuple ParseState (S.SourcePosition (S.InPlaceString String) S.LineColumnPosition)))
-parseMoreJsonStringT (Tuple parseState (S.SourcePosition _ lineColPos)) str = parseJsonNextValueT <<< Tuple parseState $ S.SourcePosition (S.InPlaceString str 0) lineColPos
+parseMoreJsonStringT (Tuple parseState (S.SourcePosition _ lineColPos)) str = parseNextJsonValueT <<< Tuple parseState $ S.SourcePosition (S.InPlaceString str 0) lineColPos
