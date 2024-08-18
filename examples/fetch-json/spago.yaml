@@ -1,0 +1,13 @@
+package:
+  name: fetch-json
+  dependencies:
+  - aff
+  - aff-promise
+  - arraybuffer
+  - console
+  - fetch-core
+  - http-methods
+  - jsinc-parser
+  - web-chain
+  - web-encoding
+  - web-streams

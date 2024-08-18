@@ -3,6 +3,7 @@
   "scripts": {
     "clean": "rimraf output && rimraf .spago",
     "postinstall": "spago install",
+
     "node-version": "echo -n \"nodejs version: \" && node --version",
     "npm-version": "echo -n \"npm version: \" && npm --version",
     "esbuild-version": "echo -n \"esbuild version: \" && esbuild --version",
@@ -12,13 +13,20 @@
     "rimraf-version": "echo -n \"rimraf version: \" && rimraf --version",
     "spago-version": "echo -n \"spago version: \" && spago --version",
     "versions": "npm run -s node-version && npm run -s npm-version && npm run -s esbuild-version && npm run -s purs-version && npm run -s psa-version && npm run -s purs-tidy-version && npm run -s rimraf-version && npm run -s spago-version",
+
     "build": "spago build -p jsinc-parser",
     "format": "purs-tidy format-in-place src test",
     "check-formatting": "purs-tidy check src test",
-    "test": "spago test"
+    "test": "spago test",
+
+    "example-fetch-json": "examples/bundle.sh fetch-json",
+    "example-all": "npm run -s example-fetch-json",
+    "launch-fetch-json": "npm run -s example-fetch-json && cd examples/fetch-json/dist && firefox http://localhost:8080"
   },
   "devDependencies": {
     "esbuild": "^0.23.0",
+    "http-server": "^14.1.1",
+    "inline-source-cli": "^2.0.0",
     "purescript": "^0.15.15",
     "purescript-psa": "^0.9.0",
     "purs-tidy": "^0.11.0",
