@@ -5,7 +5,6 @@ module Test.Main
 
 import Prelude
 
-import Control.Fix (fix)
 import Control.Json.Parser (Event(..), ParseException(..), endParseT, initParseState, parseNextJsonValueT)
 import Control.Monad.Nope (runNopeT)
 import Data.Char (fromCharCode)
@@ -22,16 +21,6 @@ logShow str a = log $ str <> ": " <> show a
 
 main ∷ Effect Unit
 main = do
-  log "fix"
-  assertEqual
-    { actual: (fix (\ fib n →
-        if n < 3
-        then 1
-        else fib(n - 1) + fib(n - 2)) 7
-      )
-    , expected: 13
-    }
-
   let source = InPlaceString "null" 0
 
   argh ← runNopeT $ peekSource source
