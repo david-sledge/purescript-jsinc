@@ -30,9 +30,9 @@ import Data.Newtype (unwrap)
 type Nope = MaybeT Identity
 
 -- | Run a computation in the `Nope` monad. The inverse of `nope`.
-runNope :: forall a. Nope a -> Maybe a
+runNope ∷ ∀ a. Nope a → Maybe a
 runNope = unwrap <<< runMaybeT
 
 -- | Transform the unwrapped computation using the given function.
-mapNope :: forall a b. (Maybe a -> Maybe b) -> Nope a -> Nope b
+mapNope ∷ ∀ a b. (Maybe a → Maybe b) → Nope a → Nope b
 mapNope f = mapNopeT (Identity <<< f <<< unwrap)

@@ -18,6 +18,10 @@ workspace:
         - aff
         - aff-promise
         - ansi
+        - argonaut
+        - argonaut-codecs
+        - argonaut-core
+        - argonaut-traversals
         - arraybuffer
         - arraybuffer-types
         - arrays
@@ -70,6 +74,7 @@ workspace:
         - pipes
         - prelude
         - profunctor
+        - profunctor-lenses
         - record
         - refs
         - safe-coerce
@@ -100,6 +105,7 @@ workspace:
     jsinc-parser:
       path: ./
       dependencies:
+        - argonaut
         - unicode
       test_dependencies:
         - assert
@@ -107,6 +113,10 @@ workspace:
       build_plan:
         - aff
         - ansi
+        - argonaut
+        - argonaut-codecs
+        - argonaut-core
+        - argonaut-traversals
         - arrays
         - assert
         - avar
@@ -124,6 +134,7 @@ workspace:
         - exceptions
         - exists
         - foldable-traversable
+        - foreign-object
         - fork
         - free
         - functions
@@ -147,6 +158,8 @@ workspace:
         - pipes
         - prelude
         - profunctor
+        - profunctor-lenses
+        - record
         - refs
         - safe-coerce
         - spec
@@ -156,6 +169,7 @@ workspace:
         - transformers
         - tuples
         - type-equality
+        - typelevel-prelude
         - unfoldable
         - unicode
         - unsafe-coerce
@@ -666,7 +680,7 @@ workspace:
   extra_packages:
     web-chain:
       git: https://github.com/david-sledge/purescript-web-chain.git
-      ref: 55a63c434e017c7091dc9ee3af12ad5c3684c2dc
+      ref: 867e41b31e057bd1b8e83d978f9e49de3d183d8e
 packages:
   aff:
     type: registry
@@ -705,6 +719,54 @@ packages:
       - foldable-traversable
       - lists
       - strings
+  argonaut:
+    type: registry
+    version: 9.0.0
+    integrity: sha256-9sHzkzcFkaMUa9+3FjIybJDYnHtY4Jp4zHOJ84qPTXo=
+    dependencies:
+      - argonaut-codecs
+      - argonaut-core
+      - argonaut-traversals
+  argonaut-codecs:
+    type: registry
+    version: 9.1.0
+    integrity: sha256-N6efXByUeg848ompEqJfVvZuZPfdRYDGlTDFn0G0Oh8=
+    dependencies:
+      - argonaut-core
+      - arrays
+      - effect
+      - foreign-object
+      - identity
+      - integers
+      - maybe
+      - nonempty
+      - ordered-collections
+      - prelude
+      - record
+  argonaut-core:
+    type: registry
+    version: 7.0.0
+    integrity: sha256-RC82GfAjItydxrO24cdX373KHVZiLqybu19b5X8u7B4=
+    dependencies:
+      - arrays
+      - control
+      - either
+      - foreign-object
+      - functions
+      - gen
+      - maybe
+      - nonempty
+      - prelude
+      - strings
+      - tailrec
+  argonaut-traversals:
+    type: registry
+    version: 10.0.0
+    integrity: sha256-9nSfqR70rjiNWVVsCoK+jrm9dmyZTx89IKNYO6uNUIk=
+    dependencies:
+      - argonaut-codecs
+      - argonaut-core
+      - profunctor-lenses
   arraybuffer:
     type: registry
     version: 13.2.0
@@ -1258,6 +1320,31 @@ packages:
       - newtype
       - prelude
       - tuples
+  profunctor-lenses:
+    type: registry
+    version: 8.0.0
+    integrity: sha256-K7f29rHRHgVSb2Y/PaSKtfYPriP6n87BJNO7EhsZHas=
+    dependencies:
+      - arrays
+      - bifunctors
+      - const
+      - control
+      - distributive
+      - either
+      - foldable-traversable
+      - foreign-object
+      - functors
+      - identity
+      - lists
+      - maybe
+      - newtype
+      - ordered-collections
+      - partial
+      - prelude
+      - profunctor
+      - record
+      - transformers
+      - tuples
   record:
     type: registry
     version: 4.0.0
@@ -1452,7 +1539,7 @@ packages:
   web-chain:
     type: git
     url: https://github.com/david-sledge/purescript-web-chain.git
-    rev: 55a63c434e017c7091dc9ee3af12ad5c3684c2dc
+    rev: 867e41b31e057bd1b8e83d978f9e49de3d183d8e
     dependencies:
       - arrays
       - effect

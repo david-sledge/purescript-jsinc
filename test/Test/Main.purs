@@ -5,19 +5,30 @@ module Test.Main
 
 import Prelude
 
-import Control.Json.Parser (Event(..), ParseException(..), endParseT, initParseState, parseNextJsonValueT)
-import Control.Monad.Nope (runNopeT)
+import Control.Json.Parser (Event(..), ParseException(..), ParseState, endParseT, initParseState, parseNextJsonValueT)
+import Control.Monad.Nope (NopeT, runNopeT)
+import Data.Argonaut
+  ( Json
+  , fromArray
+  , fromBoolean
+  , fromNumber
+  , fromObject
+  , fromString
+  , jsonNull
+  , toNumber
+  )
+import Data.Argonaut.Decode.Parser as A
+import Data.Array (uncons)
 import Data.Char (fromCharCode)
 import Data.Either (Either(..), either)
+import Data.Json.Parser (parseJson)
 import Data.Maybe (Maybe(Just, Nothing), fromMaybe, maybe)
-import Data.Source (InPlaceString(InPlaceString), LineColumnPosition(LineColumnPosition), SourcePosition(SourcePosition), advance, peekSource, headSource)
+import Data.Source (class Source, InPlaceString(InPlaceString), LineColumnPosition(LineColumnPosition), SourcePosition(SourcePosition), advance, peekSource, headSource)
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
 import Effect.Class.Console (log)
-import Test.Assert (assertEqual, assertTrue)
+import Test.Assert (assert, assertEqual, assertTrue)
 import Data.String.CodePoints (codePointFromChar, fromCodePointArray)
-
-logShow str a = log $ str <> ": " <> show a
 
 main ∷ Effect Unit
 main = do
@@ -35,7 +46,7 @@ main = do
     , expected: Just (Tuple 'n' $ InPlaceString "null" 1)
     }
 
-  maybe (pure unit) (\ (Tuple c srcPos) -> do
+  maybe (pure unit) (\ (Tuple c srcPos) → do
       argh ← runNopeT $ headSource srcPos
       assertEqual
         { actual: argh
@@ -66,7 +77,7 @@ main = do
     , expected: Just (Tuple 'n' $ SourcePosition (InPlaceString "null" 1) (LineColumnPosition 1 false 0 1))
     }
 
-  maybe (pure unit) (\ (Tuple c srcPos) -> do
+  maybe (pure unit) (\ (Tuple c srcPos) → do
       argh ← runNopeT $ headSource srcPos
       assertEqual
         { actual: argh
@@ -90,124 +101,47 @@ main = do
       wrap' str = wrap str pos
 
   ------------------------------------------------------------------------------
-  Tuple result (Tuple parseState (SourcePosition _ posi)) ← parseNextJsonValueT <<< Tuple initParseState $ wrap' " nul"
-  assertEqual
-    { actual: result
-    , expected: Left EOF
-    }
-
-  Tuple result state@(Tuple parseState (SourcePosition _ posi)) ← parseNextJsonValueT <<< Tuple parseState $ wrap "l " posi
-  assertEqual
-    { actual: result
-    , expected: Right ENull
-    }
-
-  Tuple result _ ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Left Done
-    }
+  runTest3 (Tuple initParseState $ wrap' " nul")
+    [ Tuple parseNextJsonValueT $ Tuple (Left EOF) \ (SourcePosition _ posi) -> wrap "l " posi
+    , Tuple parseNextJsonValueT $ Tuple (Right ENull) identity
+    , Tuple parseNextJsonValueT $ Tuple (Left EOF) identity
+    ]
 
   ------------------------------------------------------------------------------
-  Tuple result (Tuple parseState (SourcePosition _ posi)) ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "\tfalse \n"
-  assertEqual
-    { actual: result
-    , expected: Right (EBool false)
-    }
+  runTest (Tuple initParseState $ wrap' "\tfalse \n") [Right (EBool false)]
+  compareToArgonaut "\tfalse \n"
 
   ------------------------------------------------------------------------------
-  Tuple result (Tuple parseState (SourcePosition _ posi)) ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "\ttrue"
-  assertEqual
-    { actual: result
-    , expected: Right (EBool true)
-    }
+  runTest (Tuple initParseState $ wrap' "\ttrue") [Right (EBool true)]
+  compareToArgonaut "\ttrue"
 
   ------------------------------------------------------------------------------
-  Tuple result state@(Tuple parseState (SourcePosition _ posi)) ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "\"\\ud800\\udc00\""
-  assertEqual
-    { actual: result
-    , expected: Right EStringStart
-    }
-
-  Tuple result state ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right (EString "\xd800\xdc00")
-    }
-
-  Tuple result state ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right EStringEnd
-    }
-
-  Tuple result _ ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Left Done
-    }
+  runTest (Tuple initParseState $ wrap' "\"\\ud800\\udc00\"")
+    [ Right $ EStringStart false
+    , Right (EString false "\xd800\xdc00")
+    , Right $ EStringEnd false
+    , Left EOF
+    ]
+  compareToArgonaut "\"\\ud800\\udc00\""
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "\"rtr\\u0035\\nue\""
-  assertEqual
-    { actual: result
-    , expected: Right EStringStart
-    }
-
-  Tuple result state ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right (EString "rtr5\nue")
-    }
-
-  Tuple result state ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right EStringEnd
-    }
-
-  Tuple result _ ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Left Done
-    }
+  runTest (Tuple initParseState $ wrap' "\"rtr\\u0035\\nue\"")
+    [ Right $ EStringStart false
+    , Right $ EString false "rtr5\nue"
+    , Right $ EStringEnd false
+    , Left EOF
+    ]
+  compareToArgonaut "\"rtr\\u0035\\nue\""
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "\"rtr\\u00"
-  assertEqual
-    { actual: result
-    , expected: Right EStringStart
-    }
-
-  Tuple result state ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right (EString "rtr")
-    }
-
-  Tuple result (Tuple parseState (SourcePosition _ posi)) ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Left EOF
-    }
-
-  Tuple result state ← parseNextJsonValueT <<< Tuple parseState $ wrap "35ue\" " posi
-  assertEqual
-    { actual: result
-    , expected: Right (EString "5ue")
-    }
-
-  Tuple result state ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right EStringEnd
-    }
-
-  Tuple result _ ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Left Done
-    }
+  runTest3 (Tuple initParseState $ wrap' "\"rtr\\u00")
+    [ Tuple parseNextJsonValueT $ Tuple (Right $ EStringStart false) identity
+    , Tuple parseNextJsonValueT $ Tuple (Right $ EString false "rtr") identity
+    , Tuple parseNextJsonValueT $ Tuple (Left EOF) \ (SourcePosition _ posi) -> wrap "35ue\" " posi
+    , Tuple parseNextJsonValueT $ Tuple (Right $ EString false "5ue") identity
+    , Tuple parseNextJsonValueT $ Tuple (Right $ EStringEnd false) identity
+    , Tuple parseNextJsonValueT $ Tuple (Left EOF) identity
+    ]
 
   ------------------------------------------------------------------------------
   Tuple result _ ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "0 "
@@ -215,161 +149,116 @@ main = do
     { actual: result
     , expected: Right (ENumber 0.0)
     }
+  compareToArgonaut "0 "
 
   ------------------------------------------------------------------------------
-  Tuple result _ ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "0.0 "
-  assertEqual
-    { actual: result
-    , expected: Right (ENumber (-0.0e+0))
-    }
+  runTest (Tuple initParseState $ wrap' "0.0 ")
+    [ Right (ENumber (-0.0e+0)) ]
 
   ------------------------------------------------------------------------------
-  Tuple result _ ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "-0.0 "
-  assertEqual
-    { actual: result
-    , expected: Right (ENumber 0.0e-3)
-    }
+  runTest (Tuple initParseState $ wrap' "-0.0 ")
+    [ Right (ENumber 0.0e-3) ]
 
   ------------------------------------------------------------------------------
-  Tuple result _ ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "-0.0e+0 "
-  assertEqual
-    { actual: result
-    , expected: Right (ENumber (-0.0))
-    }
+  runTest (Tuple initParseState $ wrap' "-0.0e+0 ")
+    [ Right (ENumber (-0.0)) ]
 
   ------------------------------------------------------------------------------
-  Tuple result _ ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "0.0e-03 "
-  assertEqual
-    { actual: result
-    , expected: Right (ENumber 0.0)
-    }
+  runTest (Tuple initParseState $ wrap' "0.0e-03 ")
+    [ Right (ENumber 0.0) ]
 
   ------------------------------------------------------------------------------
-  Tuple result _ ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "0.125e+0022 "
-  assertEqual
-    { actual: result
-    , expected: Right (ENumber 0.125e22)
-    }
+  runTest (Tuple initParseState $ wrap' "0.125e+0022 ")
+    [ Right (ENumber 0.125e22) ]
 
   ------------------------------------------------------------------------------
-  Tuple result _ ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "-0.125e-0022 "
-  assertEqual
-    { actual: result
-    , expected: Right (ENumber (-0.125e-22))
-    }
+  runTest (Tuple initParseState $ wrap' "-0.125e-0022 ")
+    [ Right (ENumber (-0.125e-22)) ]
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "-0.125e-0022"
-  assertEqual
-    { actual: result
-    , expected: Left EOF
-    }
-
-  Tuple result _ ← endParseT state
-  assertEqual
-    { actual: result
-    , expected: Right (ENumber (-0.125e-22))
-    }
+  runTest2 (Tuple initParseState $ wrap' "-0.125e-0022")
+    [ Tuple parseNextJsonValueT $ Left EOF
+    , Tuple endParseT $ Right (ENumber (-0.125e-22))
+    ]
+  compareToArgonaut "-0.125e-0022"
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "[]"
-  assertEqual
-    { actual: result
-    , expected: Right EArrayStart
-    }
-
-  Tuple result _ ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right EArrayEnd
-    }
+  runTest (Tuple initParseState $ wrap' "[]")
+    [ Right EArrayStart
+    , Right EArrayEnd
+    ]
+  compareToArgonaut "[]"
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "[ null ]"
-  assertEqual
-    { actual: result
-    , expected: Right EArrayStart
-    }
-
-  Tuple result state ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right ENull
-    }
-
-  Tuple result _ ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right EArrayEnd
-    }
+  runTest (Tuple initParseState $ wrap' "[ null ]")
+    [ Right EArrayStart
+    , Right ENull
+    , Right EArrayEnd
+    ]
+  compareToArgonaut "[ null ]"
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "[ true, null ]"
-
-  Tuple result state ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right (EBool true)
-    }
-
-  Tuple result state ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right ENull
-    }
-
-  Tuple result _ ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right EArrayEnd
-    }
+  runTest (Tuple initParseState $ wrap' "[ true, null ]")
+    [ Right EArrayStart
+    , Right (EBool true)
+    , Right ENull
+    , Right EArrayEnd
+    ]
+  compareToArgonaut "[ true, null ]"
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "\r{ \t}"
-  assertEqual
-    { actual: result
-    , expected: Right EObjectStart
-    }
-
-  Tuple result _ ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right EObjectEnd
-    }
+  runTest (Tuple initParseState $ wrap' "\r{ \t}")
+    [ Right EObjectStart
+    , Right EObjectEnd
+    ]
+  compareToArgonaut "\r{ \t}"
 
   ------------------------------------------------------------------------------
-  Tuple result state ← parseNextJsonValueT <<< Tuple initParseState $ wrap' "\r{\"test\": null \t}"
-  assertEqual
-    { actual: result
-    , expected: Right EObjectStart
-    }
+  runTest (Tuple initParseState $ wrap' "\r{\"test\": null \t}")
+    [ Right EObjectStart
+    , Right (EStringStart true)
+    , Right (EString true "test")
+    , Right (EStringEnd true)
+    , Right ENull
+    , Right EObjectEnd
+    ]
+  compareToArgonaut "\r{\"test\": null \t}"
+  compareToArgonaut "\r{\"test\": null \t" -- missing close bracket
 
-  Tuple result state ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right (EStringStart)
-    }
+compareToArgonaut str = assert (either (const Nothing) Just (A.parseJson str) == either (const Nothing) Just (parseJson str))
 
-  Tuple result state ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right (EString "test")
-    }
+runTest :: forall s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Either ParseException Event) -> Effect Unit
+runTest state expected =
+  case uncons expected of
+    Just { head: x, tail: expected' } -> do
+      Tuple result state' ← parseNextJsonValueT state
+      assertEqual
+        { actual: result
+        , expected: x
+        }
+      runTest state' expected'
+    Nothing -> pure unit
 
-  Tuple result state ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right (EStringEnd)
-    }
+runTest2 :: forall s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException Event) (Tuple ParseState s))) (Either ParseException Event)) -> Effect Unit
+runTest2 state expected =
+  case uncons expected of
+    Just { head: Tuple f x, tail: expected' } -> do
+      Tuple result state' ← f state
+      assertEqual
+        { actual: result
+        , expected: x
+        }
+      runTest2 state' expected'
+    Nothing -> pure unit
 
-  Tuple result state ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right ENull
-    }
-
-  Tuple result _ ← parseNextJsonValueT state
-  assertEqual
-    { actual: result
-    , expected: Right EObjectEnd
-    }
+runTest3 :: forall s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException Event) (Tuple ParseState s))) (Tuple (Either ParseException Event) (s -> s))) -> Effect Unit
+runTest3 state expected =
+  case uncons expected of
+    Just { head: Tuple f (Tuple x g), tail: expected' } -> do
+      Tuple result (Tuple parseState srcState) ← f state
+      assertEqual
+        { actual: result
+        , expected: x
+        }
+      runTest3 (Tuple parseState $ g srcState) expected'
+    Nothing -> pure unit

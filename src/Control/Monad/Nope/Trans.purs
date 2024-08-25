@@ -19,17 +19,17 @@ import Data.Either (Either, either)
 -- | computations run in.
 type NopeT = MaybeT
 
-nopeT :: forall m a. m (Maybe a) -> NopeT m a
+nopeT ∷ ∀ m a. m (Maybe a) → NopeT m a
 nopeT = MaybeT
 
 -- | The inverse of `NopeT`. Run a computation in the `NopeT` monad.
-runNopeT :: forall m a. NopeT m a -> m (Maybe a)
+runNopeT ∷ ∀ m a. NopeT m a → m (Maybe a)
 runNopeT (MaybeT x) = x
 
 -- | Transform the unwrapped computation using the given function.
-mapNopeT :: forall m n a b. (m (Maybe a) -> n (Maybe b)) -> NopeT m a -> NopeT n b
+mapNopeT ∷ ∀ m n a b. (m (Maybe a) → n (Maybe b)) → NopeT m a → NopeT n b
 mapNopeT f (MaybeT m) = nopeT (f m)
 
 -- | Construct a computation in the `NopeT` transformer from an `Either` value.
-nopeEither :: forall e m a. Monad m => Either e a -> NopeT m a
+nopeEither ∷ ∀ e m a. Monad m ⇒ Either e a → NopeT m a
 nopeEither = either (const <<< nopeT $ pure Nothing) pure

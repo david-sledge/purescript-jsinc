@@ -140,26 +140,26 @@ instance showParseState ∷ Show ParseState where
 initParseState ∷ ParseState
 initParseState = PRoot
 
-caseParseStateOf :: forall a. a -> (ParseState -> a) -> (ParseState -> a) -> (ParseState -> a) -> (ParseState -> a) -> (Lit -> Int -> ParseState -> a) -> (Boolean -> CharRead -> ParseState -> a) -> (NumberRead -> ParseState -> a) -> (ParseState -> a) -> (ParseState -> a) -> (ParseState -> a) -> ParseState -> a
+caseParseStateOf ∷ ∀ a. a → (ParseState → a) → (ParseState → a) → (ParseState → a) → (ParseState → a) → (Lit → Int → ParseState → a) → (Boolean → CharRead → ParseState → a) → (NumberRead → ParseState → a) → (ParseState → a) → (ParseState → a) → (ParseState → a) → ParseState → a
 caseParseStateOf rootF arrStartF objStartF arrF objF litF strF numF postNameF postNameTermF postValF parseState =
   case parseState of
-    PRoot -> rootF
-    PArrayStart parentState -> arrStartF parentState
-    PObjectStart parentState -> objStartF parentState
-    PArray parentState -> arrF parentState
-    PObject parentState -> objF parentState
-    PLiteral lit int parentState -> litF lit int parentState
-    PString b charRead parentState -> strF b charRead parentState
-    PNumber numberRead parentState -> numF numberRead parentState
-    PPostName parentState -> postNameF parentState
-    PPostNameTerm parentState -> postNameTermF parentState
-    PPostValue parentState -> postValF parentState
+    PRoot → rootF
+    PArrayStart parentState → arrStartF parentState
+    PObjectStart parentState → objStartF parentState
+    PArray parentState → arrF parentState
+    PObject parentState → objF parentState
+    PLiteral lit int parentState → litF lit int parentState
+    PString b charRead parentState → strF b charRead parentState
+    PNumber numberRead parentState → numF numberRead parentState
+    PPostName parentState → postNameF parentState
+    PPostNameTerm parentState → postNameTermF parentState
+    PPostValue parentState → postValF parentState
 
 data ParseException
   = EOF
   | Msg String
   | FlogTheDeveloper ParseState
-  | Done
+  | DataAfterJson
 
 derive instance eqParseException ∷ Eq ParseException
 derive instance genericParseException ∷ Generic ParseException _
@@ -180,13 +180,14 @@ data Event
   = ENumber Number
   | ENull
   | EBool Boolean
-  | EStringStart
-  | EString String
-  | EStringEnd
+  | EStringStart Boolean
+  | EString Boolean String
+  | EStringEnd Boolean
   | EArrayStart
   | EArrayEnd
   | EObjectStart
   | EObjectEnd
+  | EJsonEnd
 
 derive instance eqEvent ∷ Eq Event
 derive instance ordEvent ∷ Ord Event
@@ -228,7 +229,7 @@ anyChar = getSourceState >>= lift <<< lift <<< runNopeT <<< headSource >>= maybe
 
 char ∷ ∀ m a s. Monad m ⇒ Source s Char (NopeT m) ⇒ Char → ExceptT ParseException (StateT (Tuple a s) m) Char
 char c = do
-  c' <- peek
+  c' ← peek
   if c == c'
   then anyChar
   else throwError <<< Msg $ "Expected '" <> singleton (codePointFromChar c) <> "', found '" <> singleton (codePointFromChar c') <> "'"
@@ -239,7 +240,7 @@ parseNextJsonValueT =
     let parse = do
           let whiteSpace p =
                 let recurse = do
-                      c <- peek
+                      c ← peek
                       if isSpace $ codePointFromChar c
                       then anyChar *> recurse
                       else p
@@ -267,12 +268,12 @@ parseNextJsonValueT =
               literalStart lit = do
                 parseState ← getParseState
                 putParseState (PLiteral lit 0 parseState) *> literalParse lit 0 parseState
-              stringStart isName = EStringStart <$ anyChar <* modify \ (Tuple parseState srcState) → Tuple (PString isName CRClean parseState) srcState
+              stringStart isName = EStringStart isName <$ anyChar <* modify \ (Tuple parseState srcState) → Tuple (PString isName CRClean parseState) srcState
               decDigitCharToInt = decDigitToInt <<< codePointFromChar
           parseState ← getParseState
           case parseState of
             PRoot → whiteSpace do
-              c <- peek
+              c ← peek
               case c of
                 'n' → literalStart LNull
                 't' → literalStart LTrue
@@ -290,7 +291,7 @@ parseNextJsonValueT =
                     )
                     $ decDigitCharToInt c
             PArrayStart parentState → whiteSpace do
-              c <- peek
+              c ← peek
               let arrStartToArr p = putParseState (PArray parentState) *> p
               case c of
                 'n' → arrStartToArr $ literalStart LNull
@@ -311,14 +312,14 @@ parseNextJsonValueT =
                     )
                     $ decDigitCharToInt c
             PObjectStart parentState → whiteSpace do
-              c <- peek
+              c ← peek
               let objStartToArr p = putParseState (PObject parentState) *> p
               case c of
                 '"' → objStartToArr $ stringStart true
                 '}' → EObjectEnd <$ anyChar <* stateTransitionFromEndValue parentState
                 _ → throwError $ Msg "Invalid character. Expecting the end of the object or a string."
             PArray _ → whiteSpace do
-              c <- peek
+              c ← peek
               case c of
                 'n' → literalStart LNull
                 't' → literalStart LTrue
@@ -336,7 +337,7 @@ parseNextJsonValueT =
                     )
                     $ decDigitCharToInt c
             PObject _ → whiteSpace do
-              c <- peek
+              c ← peek
               case c of
                 '"' → stringStart true
                 _ → throwError $ Msg "Invalid character. Expecting a string."
@@ -345,7 +346,7 @@ parseNextJsonValueT =
                     catchError
                       ( let nextCharRead cRead cpArr' = anyChar *> putParseState (PString isName cRead parentState) *> recurse cRead cpArr'
                             peekChar p = do
-                              c <- peek
+                              c ← peek
                               p c $ codePointFromChar c
                         in
                         case charRead' of
@@ -353,8 +354,8 @@ parseNextJsonValueT =
                             case c of
                               '\\' → nextCharRead CREscape cpArr
                               '"' → if A.length cpArr > 0
-                                then pure <<< EString $ fromCodePointArray cpArr
-                                else EStringEnd <$ anyChar <* putParseState ((if isName then PPostName else PPostValue) parentState)
+                                then pure <<< EString isName $ fromCodePointArray cpArr
+                                else EStringEnd isName <$ anyChar <* putParseState ((if isName then PPostName else PPostValue) parentState)
                               _ → if isControl cp
                                 then throwError $ Msg "Unescaped control characters are not allowed."
                                 else snoc cpArr cp <$ anyChar >>= recurse charRead'
@@ -381,7 +382,7 @@ parseNextJsonValueT =
                     )
                     (\ e →
                       if A.length cpArr > 0
-                      then pure <<< EString $ fromCodePointArray cpArr
+                      then pure <<< EString isName $ fromCodePointArray cpArr
                       else throwError e
                     )
               in
@@ -391,7 +392,7 @@ parseNextJsonValueT =
             PPostNameTerm parentState → do
               putParseState parentState
               whiteSpace do
-                c <- peek
+                c ← peek
                 case c of
                   'n' → literalStart LNull
                   't' → literalStart LTrue
@@ -410,15 +411,15 @@ parseNextJsonValueT =
                       $ decDigitCharToInt c
             PPostValue parentState → do
               case parentState of
-                PRoot → whiteSpace $ throwError Done
+                PRoot → whiteSpace $ throwError DataAfterJson
                 PArray gParentState → whiteSpace do
-                  c' <- peek
+                  c' ← peek
                   case c' of
                     ',' → anyChar *> putParseState parentState *> parse
                     ']' → EArrayEnd <$ anyChar <* putParseState gParentState <* stateTransitionFromEndValue gParentState
                     _ → throwError $ Msg "Invalid character. Expecting the end of the array or a comma."
                 PObject gParentState → whiteSpace do
-                  c' <- peek
+                  c' ← peek
                   case c' of
                     ',' → anyChar *> putParseState parentState *> parse
                     '}' → EObjectEnd <$ anyChar <* putParseState gParentState <* stateTransitionFromEndValue gParentState
@@ -426,7 +427,7 @@ parseNextJsonValueT =
                 _ → throwError $ FlogTheDeveloper parentState
             PNumber numberRead parentState →
               let numberParse numberRead' = do
-                    c <- peek
+                    c ← peek
                     let recurse numberRead'' =
                           anyChar
                             *> putParseState (PNumber numberRead'' parentState)
@@ -498,7 +499,7 @@ parseMoreJsonDataT parseState = parseNextJsonValueT <<< Tuple parseState
 parseJsonT ∷ ∀ m s. Monad m ⇒ Source s Char (MaybeT m) ⇒ s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
 parseJsonT = parseMoreJsonDataT initParseState
 
-endParseT ∷ ∀ m a. Monad m ⇒ Tuple ParseState a → m (Tuple (Either ParseException Event) (Tuple ParseState a))
+endParseT ∷ ∀ m s. Monad m ⇒ Tuple ParseState s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
 endParseT = runStateT $ runExceptT do
   parseState ← getParseState
   case parseState of
@@ -521,7 +522,7 @@ endParseT = runStateT $ runExceptT do
     PPostNameTerm _ → throwError $ Msg "Incomplete property. Missing value."
     PPostValue parentState →
       case parentState of
-        PRoot → throwError Done
+        PRoot → pure EJsonEnd
         PArray _ → throwError $ Msg "Incomplete array. No close bracket found."
         PObject _ → throwError $ Msg "Incomplete object. No close curly bracket found."
         _ → throwError $ FlogTheDeveloper parentState
@@ -535,17 +536,17 @@ endParseT = runStateT $ runExceptT do
         NRExpSign _ _ → throwError $ Msg "Incomplete exponent."
         NRExp num isPos exp → numberEnd (num * pow 10.0 (applySign isPos exp)) parentState
 
-startState :: forall s. s -> Tuple ParseState (SourcePosition (InPlaceString s) LineColumnPosition)
+startState ∷ ∀ s. s → Tuple ParseState (SourcePosition (InPlaceString s) LineColumnPosition)
 startState str = Tuple initParseState <<< SourcePosition (InPlaceString str 0) $ LineColumnPosition 0 false 0 0
 
-emptyStartState :: Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition)
+emptyStartState ∷ Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition)
 emptyStartState = startState ""
 
-parseJsonStringT :: forall m. Monad m => String -> m (Tuple (Either ParseException Event) (Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition)))
+parseJsonStringT ∷ ∀ m. Monad m ⇒ String → m (Tuple (Either ParseException Event) (Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition)))
 parseJsonStringT = parseNextJsonValueT <<< startState
 
-stateString :: Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition) -> String -> Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition)
+stateString ∷ Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition) → String → Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition)
 stateString (Tuple parseState (SourcePosition _ lineColPos)) str = Tuple parseState $ SourcePosition (InPlaceString str 0) lineColPos
 
-parseMoreJsonStringT :: forall m. Monad m => Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition) -> String -> m (Tuple (Either ParseException Event) (Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition)))
+parseMoreJsonStringT ∷ ∀ m. Monad m ⇒ Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition) → String → m (Tuple (Either ParseException Event) (Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition)))
 parseMoreJsonStringT = compose parseNextJsonValueT <<< stateString

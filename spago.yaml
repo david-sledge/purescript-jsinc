@@ -2,11 +2,12 @@ workspace:
   extraPackages:
     web-chain:
       git: https://github.com/david-sledge/purescript-web-chain.git
-      ref: 55a63c434e017c7091dc9ee3af12ad5c3684c2dc
+      ref: 867e41b31e057bd1b8e83d978f9e49de3d183d8e
   packageSet:
     registry: 56.4.0
 package:
   dependencies:
+  - argonaut
   - unicode
   name: jsinc-parser
   test:
