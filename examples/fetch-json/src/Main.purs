@@ -2,7 +2,7 @@ module Main where
 
 import Prelude
 
-import Control.Json.Parser
+import Control.Json.Core.Parser
   ( Event
     ( ENumber
     , ENull

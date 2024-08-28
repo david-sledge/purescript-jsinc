@@ -1,4 +1,4 @@
-module Control.Json.Parser
+module Control.Json.Core.Parser
   ( CharRead(..)
   , Event(..)
   , Lit(..)
@@ -10,6 +10,7 @@ module Control.Json.Parser
   , emptyStartState
   , endParseT
   , initParseState
+  , initSourceState
   , parseJsonStringT
   , parseJsonT
   , parseMoreJsonDataT
@@ -156,10 +157,28 @@ caseParseStateOf rootF arrStartF objStartF arrF objF litF strF numF postNameF po
     PPostValue parentState → postValF parentState
 
 data ParseException
-  = EOF
-  | Msg String
-  | FlogTheDeveloper ParseState
+  = CharExpected Char
+  | UnescapedControl
+  | InvalidEscape
+  | IncompleteUnicodeEscape
+  | InvalidValue
+  | InvalidValueArrayEnd
+  | InvalidDelimArrayEnd
+  | InvalidPropName
+  | InvalidPropNameObjectEnd
+  | InvalidDelimObjectEnd
+  | MissingValue
+  | IncompleteEscape
+  | IncompleteLiteral
+  | IncompleteWholeNumber
+  | IncompleteExponent
+  | IncompleteString
+  | MissingPropName
+  | UnclosedArray
+  | UnclosedObject
+  | EOF
   | DataAfterJson
+  | FlogTheDeveloper ParseState
 
 derive instance eqParseException ∷ Eq ParseException
 derive instance genericParseException ∷ Generic ParseException _
@@ -232,11 +251,11 @@ char c = do
   c' ← peek
   if c == c'
   then anyChar
-  else throwError <<< Msg $ "Expected '" <> singleton (codePointFromChar c) <> "', found '" <> singleton (codePointFromChar c') <> "'"
+  else throwError $ CharExpected c
 
 parseNextJsonValueT ∷ ∀ m s. Monad m ⇒ Source s Char (NopeT m) ⇒ Tuple ParseState s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
 parseNextJsonValueT =
-  runStateT (runExceptT $
+  runStateT $ runExceptT
     let parse = do
           let whiteSpace p =
                 let recurse = do
@@ -283,7 +302,7 @@ parseNextJsonValueT =
                 '"' → stringStart false
                 '-' → anyChar *> putParseState (PNumber NRNegSign parseState) *> parse
                 _ → maybe
-                    (throwError $ Msg "Invalid character. Expecting a value (null, Boolean, string, number, array, or object).")
+                    (throwError InvalidValue)
                     (\ digit →
                       anyChar
                         *> putParseState (PNumber (NRWholeNum true $ toNumber digit) parseState)
@@ -303,7 +322,7 @@ parseNextJsonValueT =
                 ']' → EArrayEnd <$ anyChar <* stateTransitionFromEndValue parentState
                 '-' → arrStartToArr $ anyChar *> putParseState (PNumber NRNegSign parseState) *> parse
                 _ → maybe
-                    (throwError $ Msg "Invalid character. Expecting the end of the array or a value (null, Boolean, string, number, array, or object).")
+                    (throwError InvalidValue)
                     (\ digit →
                       arrStartToArr
                         $ anyChar
@@ -317,7 +336,7 @@ parseNextJsonValueT =
               case c of
                 '"' → objStartToArr $ stringStart true
                 '}' → EObjectEnd <$ anyChar <* stateTransitionFromEndValue parentState
-                _ → throwError $ Msg "Invalid character. Expecting the end of the object or a string."
+                _ → throwError InvalidPropNameObjectEnd
             PArray _ → whiteSpace do
               c ← peek
               case c of
@@ -329,7 +348,7 @@ parseNextJsonValueT =
                 '"' → stringStart false
                 '-' → anyChar *> putParseState (PNumber NRNegSign parseState) *> parse
                 _ → maybe
-                    (throwError $ Msg "Invalid character. Expecting a value (null, Boolean, string, number, array, or object).")
+                    (throwError InvalidValue)
                     (\ digit →
                       anyChar
                         *> putParseState (PNumber (NRWholeNum true $ toNumber digit) parseState)
@@ -340,7 +359,7 @@ parseNextJsonValueT =
               c ← peek
               case c of
                 '"' → stringStart true
-                _ → throwError $ Msg "Invalid character. Expecting a string."
+                _ → throwError InvalidPropName
             PString isName charRead parentState →
               let recurse charRead' cpArr =
                     catchError
@@ -357,7 +376,7 @@ parseNextJsonValueT =
                                 then pure <<< EString isName $ fromCodePointArray cpArr
                                 else EStringEnd isName <$ anyChar <* putParseState ((if isName then PPostName else PPostValue) parentState)
                               _ → if isControl cp
-                                then throwError $ Msg "Unescaped control characters are not allowed."
+                                then throwError UnescapedControl
                                 else snoc cpArr cp <$ anyChar >>= recurse charRead'
                           CREscape → peekChar \ c cp →
                             let esc c' = nextCharRead CRClean $ snoc cpArr (codePointFromChar c') in
@@ -371,12 +390,12 @@ parseNextJsonValueT =
                               'r' → esc '\r'
                               't' → esc '\t'
                               'u' → nextCharRead (CRUnicode 0 0) cpArr
-                              _ → throwError <<< Msg $ "Invalid escape sequence: \"\\" <> singleton cp <> "\""
+                              _ → throwError InvalidEscape
                           CRUnicode charCount value →
                                 if charCount == 4
                                 then putParseState (PString isName CRClean parentState) *> recurse CRClean (snoc cpArr <<< codePointFromChar <<< fromMaybe '\xfffd' $ fromCharCode value)
                                 else peekChar \ _ cp → maybe
-                                  (throwError <<< Msg $ "Invalid hex digit: \"\\" <> singleton cp <> "\"")
+                                  (throwError IncompleteUnicodeEscape)
                                   (\ digit → nextCharRead (CRUnicode (charCount + 1) $ value * 16 + digit) cpArr)
                                   $ hexDigitToInt cp
                     )
@@ -402,7 +421,7 @@ parseNextJsonValueT =
                   '"' → stringStart false
                   '-' → anyChar *> putParseState (PNumber NRNegSign parentState) *> parse
                   _ → maybe
-                      (throwError $ Msg "Invalid character. Expecting a value (null, Boolean, string, number, array, or object).")
+                      (throwError InvalidValue)
                       (\ digit →
                         anyChar
                           *> putParseState (PNumber (NRWholeNum true $ toNumber digit) parentState)
@@ -417,13 +436,13 @@ parseNextJsonValueT =
                   case c' of
                     ',' → anyChar *> putParseState parentState *> parse
                     ']' → EArrayEnd <$ anyChar <* putParseState gParentState <* stateTransitionFromEndValue gParentState
-                    _ → throwError $ Msg "Invalid character. Expecting the end of the array or a comma."
+                    _ → throwError InvalidDelimArrayEnd
                 PObject gParentState → whiteSpace do
                   c' ← peek
                   case c' of
                     ',' → anyChar *> putParseState parentState *> parse
                     '}' → EObjectEnd <$ anyChar <* putParseState gParentState <* stateTransitionFromEndValue gParentState
-                    _ → throwError $ Msg "Invalid character. Expecting the end of the object or a comma."
+                    _ → throwError InvalidDelimObjectEnd
                 _ → throwError $ FlogTheDeveloper parentState
             PNumber numberRead parentState →
               let numberParse numberRead' = do
@@ -438,7 +457,7 @@ parseNextJsonValueT =
                     case numberRead' of
                       NRNegSign →
                         digitMaybe
-                          (throwError $ Msg "")
+                          (throwError IncompleteWholeNumber)
                           (recurse <<< NRWholeNum false)
                       NRWholeNum isPos num →
                         let intNum = numberEnd (applySign isPos num) parentState in
@@ -459,7 +478,7 @@ parseNextJsonValueT =
                               (recurse <<< NRWholeNum isPos <<< add (num * 10.0))
                       NRDecPoint isPos num →
                         digitMaybe
-                          (throwError $ Msg "Expecting at least one decimal digit after the decimal point.")
+                          (throwError IncompleteExponent)
                           (recurse <<< NRFrac isPos num <<< fracF)
                       NRFrac isPos num accF →
                         let expStart' = expStart isPos $ num + accF 0.0 in
@@ -477,11 +496,11 @@ parseNextJsonValueT =
                           '-' → toExpSign false
                           _ →
                             digitMaybe
-                              (throwError $ Msg "Expecting a positive sign, negative sign, or a decimal digit after the exponent indicator.")
+                              (throwError IncompleteExponent)
                               (recurse <<< NRExp num true)
                       NRExpSign num isPos →
                         digitMaybe
-                          (throwError $ Msg "Expecting at least one decimal digit.")
+                          (throwError IncompleteExponent)
                           (recurse <<< NRExp num isPos)
                       NRExp num isPos exp →
                         digitMaybe
@@ -491,7 +510,6 @@ parseNextJsonValueT =
               numberParse numberRead
       in
       parse
-    )
 
 parseMoreJsonDataT ∷ ∀ m s. Monad m ⇒ Source s Char (MaybeT m) ⇒ ParseState → s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
 parseMoreJsonDataT parseState = parseNextJsonValueT <<< Tuple parseState
@@ -503,41 +521,39 @@ endParseT ∷ ∀ m s. Monad m ⇒ Tuple ParseState s → m (Tuple (Either Parse
 endParseT = runStateT $ runExceptT do
   parseState ← getParseState
   case parseState of
-    PRoot → throwError $ Msg "Missing a value (null, Boolean, string, number, array, or object)."
-    PArrayStart _ → throwError $ Msg "Incomplete array. No close bracket found."
-    PObjectStart _ → throwError $ Msg "Incomplete object. No close curly bracket found."
-    PArray _ → throwError $ Msg "Missing a value (null, Boolean, string, number, array, or object)."
-    PObject _ → throwError $ Msg "Missing a property name in the form of a string."
+    PRoot → throwError MissingValue
+    PArrayStart _ → throwError UnclosedArray
+    PObjectStart _ → throwError UnclosedObject
+    PArray _ → throwError MissingValue
+    PObject _ → throwError MissingPropName
     PString _ charRead _ →
       case charRead of
-        CRClean → throwError $ Msg "Incomplete string. Missing closing double quote"
-        CREscape → throwError $ Msg "Incomplete escape. Expected \", \\, /, b, f, n, r, t, or u"
-        CRUnicode charCount _ → throwError <<< Msg $ "Incomplete unicode escape. Expected 4 hexidecimal digits. Found only " <> show charCount <> "."
-    PLiteral lit charCount _ → throwError <<< Msg $ "Invalid value: "
-      <> slice 0 charCount case lit of
-        LTrue → "true"
-        LFalse → "false"
-        LNull → "null"
-    PPostName _ → throwError $ Msg "Incomplete property. Missing value."
-    PPostNameTerm _ → throwError $ Msg "Incomplete property. Missing value."
+        CRClean → throwError IncompleteString
+        CREscape → throwError IncompleteEscape
+        CRUnicode charCount _ → throwError IncompleteUnicodeEscape
+    PLiteral lit charCount _ → throwError IncompleteLiteral
+    PPostName _ → throwError MissingValue
+    PPostNameTerm _ → throwError MissingValue
     PPostValue parentState →
       case parentState of
         PRoot → pure EJsonEnd
-        PArray _ → throwError $ Msg "Incomplete array. No close bracket found."
-        PObject _ → throwError $ Msg "Incomplete object. No close curly bracket found."
+        PArray _ → throwError UnclosedArray
+        PObject _ → throwError UnclosedObject
         _ → throwError $ FlogTheDeveloper parentState
     PNumber numberRead parentState →
       case numberRead of
-        NRNegSign → throwError $ Msg "Incomplete number."
+        NRNegSign → throwError IncompleteWholeNumber
         NRWholeNum isPos num → numberEnd (applySign isPos num) parentState
-        NRDecPoint _ _ → throwError $ Msg "Incomplete number."
+        NRDecPoint _ _ → throwError IncompleteWholeNumber
         NRFrac isPos num accF → numberEnd (applySign isPos $ num + accF 0.0) parentState
-        NRExpInd _ → throwError $ Msg "Incomplete exponent."
-        NRExpSign _ _ → throwError $ Msg "Incomplete exponent."
+        NRExpInd _ → throwError IncompleteExponent
+        NRExpSign _ _ → throwError IncompleteExponent
         NRExp num isPos exp → numberEnd (num * pow 10.0 (applySign isPos exp)) parentState
 
+initSourceState str = SourcePosition (InPlaceString str 0) $ LineColumnPosition 0 false 0 0
+
 startState ∷ ∀ s. s → Tuple ParseState (SourcePosition (InPlaceString s) LineColumnPosition)
-startState str = Tuple initParseState <<< SourcePosition (InPlaceString str 0) $ LineColumnPosition 0 false 0 0
+startState = Tuple initParseState <<< initSourceState
 
 emptyStartState ∷ Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition)
 emptyStartState = startState ""

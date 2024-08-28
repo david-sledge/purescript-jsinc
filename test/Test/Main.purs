@@ -5,7 +5,7 @@ module Test.Main
 
 import Prelude
 
-import Control.Json.Parser (Event(..), ParseException(..), ParseState, endParseT, initParseState, parseNextJsonValueT)
+import Control.Json.Core.Parser (Event(..), ParseException(..), ParseState, endParseT, initParseState, parseNextJsonValueT)
 import Control.Monad.Nope (NopeT, runNopeT)
 import Data.Argonaut
   ( Json
@@ -102,7 +102,7 @@ main = do
 
   ------------------------------------------------------------------------------
   runTest3 (Tuple initParseState $ wrap' " nul")
-    [ Tuple parseNextJsonValueT $ Tuple (Left EOF) \ (SourcePosition _ posi) -> wrap "l " posi
+    [ Tuple parseNextJsonValueT $ Tuple (Left EOF) \ (SourcePosition _ posi) → wrap "l " posi
     , Tuple parseNextJsonValueT $ Tuple (Right ENull) identity
     , Tuple parseNextJsonValueT $ Tuple (Left EOF) identity
     ]
@@ -137,7 +137,7 @@ main = do
   runTest3 (Tuple initParseState $ wrap' "\"rtr\\u00")
     [ Tuple parseNextJsonValueT $ Tuple (Right $ EStringStart false) identity
     , Tuple parseNextJsonValueT $ Tuple (Right $ EString false "rtr") identity
-    , Tuple parseNextJsonValueT $ Tuple (Left EOF) \ (SourcePosition _ posi) -> wrap "35ue\" " posi
+    , Tuple parseNextJsonValueT $ Tuple (Left EOF) \ (SourcePosition _ posi) → wrap "35ue\" " posi
     , Tuple parseNextJsonValueT $ Tuple (Right $ EString false "5ue") identity
     , Tuple parseNextJsonValueT $ Tuple (Right $ EStringEnd false) identity
     , Tuple parseNextJsonValueT $ Tuple (Left EOF) identity
@@ -227,38 +227,38 @@ main = do
 
 compareToArgonaut str = assert (either (const Nothing) Just (A.parseJson str) == either (const Nothing) Just (parseJson str))
 
-runTest :: forall s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Either ParseException Event) -> Effect Unit
+runTest ∷ ∀ s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Either ParseException Event) → Effect Unit
 runTest state expected =
   case uncons expected of
-    Just { head: x, tail: expected' } -> do
+    Just { head: x, tail: expected' } → do
       Tuple result state' ← parseNextJsonValueT state
       assertEqual
         { actual: result
         , expected: x
         }
       runTest state' expected'
-    Nothing -> pure unit
+    Nothing → pure unit
 
-runTest2 :: forall s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException Event) (Tuple ParseState s))) (Either ParseException Event)) -> Effect Unit
+runTest2 ∷ ∀ s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException Event) (Tuple ParseState s))) (Either ParseException Event)) → Effect Unit
 runTest2 state expected =
   case uncons expected of
-    Just { head: Tuple f x, tail: expected' } -> do
+    Just { head: Tuple f x, tail: expected' } → do
       Tuple result state' ← f state
       assertEqual
         { actual: result
         , expected: x
         }
       runTest2 state' expected'
-    Nothing -> pure unit
+    Nothing → pure unit
 
-runTest3 :: forall s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException Event) (Tuple ParseState s))) (Tuple (Either ParseException Event) (s -> s))) -> Effect Unit
+runTest3 ∷ ∀ s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException Event) (Tuple ParseState s))) (Tuple (Either ParseException Event) (s → s))) → Effect Unit
 runTest3 state expected =
   case uncons expected of
-    Just { head: Tuple f (Tuple x g), tail: expected' } -> do
+    Just { head: Tuple f (Tuple x g), tail: expected' } → do
       Tuple result (Tuple parseState srcState) ← f state
       assertEqual
         { actual: result
         , expected: x
         }
       runTest3 (Tuple parseState $ g srcState) expected'
-    Nothing -> pure unit
+    Nothing → pure unit
