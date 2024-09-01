@@ -8,14 +8,10 @@ module Control.Json.Core.Parser
   , SourceState(..)
   , caseParseStateOf
   , emptyStartState
-  , endParseT
+  , endJsonStreamParseT
   , initParseState
-  , initSourceState
-  , parseJsonStringT
-  , parseJsonT
-  , parseMoreJsonDataT
-  , parseMoreJsonStringT
-  , parseNextJsonValueT
+  , parseJsonStreamT
+  , runParseT
   , startState
   , stateString
   )
@@ -25,7 +21,6 @@ import Prelude
 
 import Control.Monad.Except (ExceptT, catchError, runExceptT, throwError)
 import Control.Monad.Error.Class (class MonadThrow)
-import Control.Monad.Maybe.Trans (MaybeT)
 import Control.Monad.Nope (NopeT, runNopeT)
 import Control.Monad.State (class MonadState, StateT, get, modify, runStateT)
 import Control.Monad.Trans.Class (lift)
@@ -42,12 +37,12 @@ import Data.Show.Generic (genericShow)
 import Data.Source
   ( class Source
   , SourcePosition(SourcePosition)
-  , InPlaceString(InPlaceString)
-  , LineColumnPosition(LineColumnPosition)
+  , InPlaceSource(InPlaceSource)
+  , LineColumnPosition
   , peekSource
-  , headSource)
-import Data.String (singleton)
-import Data.String.CodeUnits (charAt, slice)
+  , headSource
+  , initStringPosition)
+import Data.String.CodeUnits (charAt)
 import Data.String.CodePoints (codePointFromChar, fromCodePointArray)
 import Data.Tuple (Tuple(Tuple), fst, snd)
 
@@ -253,9 +248,12 @@ char c = do
   then anyChar
   else throwError $ CharExpected c
 
-parseNextJsonValueT ∷ ∀ m s. Monad m ⇒ Source s Char (NopeT m) ⇒ Tuple ParseState s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
-parseNextJsonValueT =
-  runStateT $ runExceptT
+runParseT ∷ ∀ m s e a. ExceptT e (StateT m s) a → m → s (Tuple (Either e a) m)
+runParseT = runStateT <<< runExceptT
+
+parseJsonStreamT ∷ ∀ m s. Monad m ⇒ Source s Char (NopeT m) ⇒ Tuple ParseState s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
+parseJsonStreamT =
+  runParseT
     let parse = do
           let whiteSpace p =
                 let recurse = do
@@ -378,7 +376,7 @@ parseNextJsonValueT =
                               _ → if isControl cp
                                 then throwError UnescapedControl
                                 else snoc cpArr cp <$ anyChar >>= recurse charRead'
-                          CREscape → peekChar \ c cp →
+                          CREscape → peekChar \ c _ →
                             let esc c' = nextCharRead CRClean $ snoc cpArr (codePointFromChar c') in
                             case c of
                               '"' → esc '"'
@@ -511,14 +509,8 @@ parseNextJsonValueT =
       in
       parse
 
-parseMoreJsonDataT ∷ ∀ m s. Monad m ⇒ Source s Char (MaybeT m) ⇒ ParseState → s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
-parseMoreJsonDataT parseState = parseNextJsonValueT <<< Tuple parseState
-
-parseJsonT ∷ ∀ m s. Monad m ⇒ Source s Char (MaybeT m) ⇒ s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
-parseJsonT = parseMoreJsonDataT initParseState
-
-endParseT ∷ ∀ m s. Monad m ⇒ Tuple ParseState s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
-endParseT = runStateT $ runExceptT do
+endJsonStreamParseT ∷ ∀ m s. Monad m ⇒ Tuple ParseState s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
+endJsonStreamParseT = runStateT $ runExceptT do
   parseState ← getParseState
   case parseState of
     PRoot → throwError MissingValue
@@ -530,8 +522,8 @@ endParseT = runStateT $ runExceptT do
       case charRead of
         CRClean → throwError IncompleteString
         CREscape → throwError IncompleteEscape
-        CRUnicode charCount _ → throwError IncompleteUnicodeEscape
-    PLiteral lit charCount _ → throwError IncompleteLiteral
+        CRUnicode _ _ → throwError IncompleteUnicodeEscape
+    PLiteral _ _ _ → throwError IncompleteLiteral
     PPostName _ → throwError MissingValue
     PPostNameTerm _ → throwError MissingValue
     PPostValue parentState →
@@ -550,19 +542,11 @@ endParseT = runStateT $ runExceptT do
         NRExpSign _ _ → throwError IncompleteExponent
         NRExp num isPos exp → numberEnd (num * pow 10.0 (applySign isPos exp)) parentState
 
-initSourceState str = SourcePosition (InPlaceString str 0) $ LineColumnPosition 0 false 0 0
+startState ∷ ∀ s. s → Tuple ParseState (SourcePosition (InPlaceSource s) LineColumnPosition)
+startState = Tuple initParseState <<< initStringPosition
 
-startState ∷ ∀ s. s → Tuple ParseState (SourcePosition (InPlaceString s) LineColumnPosition)
-startState = Tuple initParseState <<< initSourceState
-
-emptyStartState ∷ Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition)
+emptyStartState ∷ Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)
 emptyStartState = startState ""
 
-parseJsonStringT ∷ ∀ m. Monad m ⇒ String → m (Tuple (Either ParseException Event) (Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition)))
-parseJsonStringT = parseNextJsonValueT <<< startState
-
-stateString ∷ Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition) → String → Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition)
-stateString (Tuple parseState (SourcePosition _ lineColPos)) str = Tuple parseState $ SourcePosition (InPlaceString str 0) lineColPos
-
-parseMoreJsonStringT ∷ ∀ m. Monad m ⇒ Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition) → String → m (Tuple (Either ParseException Event) (Tuple ParseState (SourcePosition (InPlaceString String) LineColumnPosition)))
-parseMoreJsonStringT = compose parseNextJsonValueT <<< stateString
+stateString ∷ Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition) → String → Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)
+stateString (Tuple parseState (SourcePosition _ lineColPos)) str = Tuple parseState $ SourcePosition (InPlaceSource str 0) lineColPos

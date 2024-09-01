@@ -1,8 +1,12 @@
 module Data.Json.Parser
-  ( Accumulator
-  , endParseIncrT
+  ( Accumulator(..)
+  , DecodeExcption(..)
+  , class DecodeJsonStream
+  , decodeJsonT
+  , endJsonDecodeT
+  , endJsonStreamDecodeT
   , parseJson
-  , parseJsonIncrT
+  , decodeJsonStreamT
   )
   where
 
@@ -25,17 +29,17 @@ import Control.Json.Core.Parser
   , ParseException(EOF, FlogTheDeveloper, DataAfterJson)
   , ParseState
   , emptyStartState
-  , endParseT
+  , endJsonStreamParseT
   , initParseState
-  , parseJsonT
-  , parseNextJsonValueT
+  , parseJsonStreamT
+  , runParseT
   , startState
   , stateString
   )
 import Control.Monad.Error.Class (class MonadThrow)
-import Control.Monad.Except (ExceptT, runExceptT, throwError)
+import Control.Monad.Except (throwError)
 import Control.Monad.Maybe.Trans (MaybeT)
-import Control.Monad.State (StateT, get, put, runStateT)
+import Control.Monad.State (class MonadState, get, modify, put)
 import Data.Argonaut
   ( Json
   , fromArray
@@ -51,229 +55,131 @@ import Data.Identity (Identity(Identity))
 import Data.Maybe (Maybe(Just, Nothing), maybe)
 import Data.Source
   ( class Source
-  , LineColumnPosition(LineColumnPosition)
-  , SourcePosition(SourcePosition)
+  , initStringPosition
   )
 import Data.Tuple (Tuple(Tuple))
 import Foreign.Object (fromFoldable)
 
+data DecodeExcption e
+  = ProgrammaticError e
+  | ParseError ParseException
+
+class DecodeJsonStream a c where
+  decodeJsonT ∷ ∀ m. MonadThrow (DecodeExcption c) m ⇒ c → Event → m (Either c a)
+  endJsonDecodeT ∷ ∀ m. MonadThrow (DecodeExcption c) m ⇒ c → Event → m (Either c (Maybe a))
+
+processJsonStreamT ∷ ∀ m a s c' ev c. MonadState (Tuple s c') m ⇒ MonadThrow (DecodeExcption c) m ⇒ (s → m (Tuple (Either ParseException ev) s)) → (c' → ev → m (Either c' a)) → m a
+processJsonStreamT f g =
+  let recurse = do
+        Tuple state acc ← get
+        Tuple result state' ← f state
+        put (Tuple state' acc)
+        either (throwError <<< ParseError) (\ event → do
+            res ← g acc event
+            either (\ acc' → modify (\ (Tuple state'' _) → Tuple state'' acc') *> recurse) pure res
+          ) result
+  in
+  recurse
+
+decodeJsonStreamT ∷ ∀ m a c s. MonadState (Tuple (Tuple ParseState s) c) m ⇒ MonadThrow (DecodeExcption c) m ⇒ Source s Char (MaybeT m) ⇒ DecodeJsonStream a c ⇒ m a
+decodeJsonStreamT = processJsonStreamT parseJsonStreamT decodeJsonT
+
+endJsonStreamDecodeT ∷ ∀ m c s a. MonadState (Tuple (Tuple ParseState s) c) m ⇒ MonadThrow (DecodeExcption c) m ⇒ DecodeJsonStream a c ⇒ m (Maybe a)
+endJsonStreamDecodeT = processJsonStreamT endJsonStreamParseT endJsonDecodeT
+
 data Accumulator
-  = RootAcc (Maybe Json)
+  = RootAcc
   | StringAcc Accumulator String
   | ArrayAcc Accumulator (Array Json)
   | ObjectAcc Accumulator (Array (Tuple String Json)) (Maybe String)
 
-class FromJsonStream a where
-  fromJsonStream ∷ ∀ m s b. Monad m ⇒ Source s Char (MaybeT (ExceptT ParseException (StateT (Tuple (Tuple ParseState s) b) m))) ⇒ Tuple (Tuple ParseState s) b → m (Tuple (Either ParseException a) (Tuple (Tuple ParseState s) b))
-
--- hmmm result = do
---   either throwError (\ event ->
---       let processRootValue mVal jVal =
---             case mVal of
---               Nothing → put (Tuple state' <<< RootAcc $ Just jVal) *> process
---               Just val → thro $ FlogTheDeveloper parseState
---           processArrayValue acc' values jVal = put (Tuple state' <<< ArrayAcc acc' $ snoc values jVal) *> process
---           processPropValue acc' props jVal name = put (Tuple state' $ ObjectAcc acc' (snoc props $ Tuple name jVal) Nothing) *> process
---           processValue mStr acc' jVal =
---             case acc' of
---               RootAcc mVal → processRootValue mVal jVal
---               ArrayAcc acc'' values → processArrayValue acc'' values jVal
---               ObjectAcc acc'' props mName →
---                 maybe
---                   (maybe (thro $ FlogTheDeveloper parseState) (\ str → put (Tuple state' <<< ObjectAcc acc'' props $ Just str) *> process) mStr)
---                   (processPropValue acc'' props jVal)
---                   mName
---               _ → thro $ FlogTheDeveloper parseState
---       in
---       case event of
---         ENumber num → processValue Nothing acc $ fromNumber num
---         ENull → processValue Nothing acc jsonNull
---         EBool bool → processValue Nothing acc $ fromBoolean bool
---         EStringStart _ →
---           case acc of
---             StringAcc _ _ → thro $ FlogTheDeveloper parseState
---             _ → put (Tuple state' $ StringAcc acc "") *> parse
---         EString _ str →
---           case acc of
---             StringAcc acc' str' → put (Tuple state' <<< StringAcc acc' $ str' <> str) *> parse
---             _ → thro $ FlogTheDeveloper parseState
---         EStringEnd _ →
---           case acc of
---             StringAcc acc' str → processValue (Just str) acc' $ fromString str
---             _ → thro $ FlogTheDeveloper parseState
---         EArrayStart → put (Tuple state' $ ArrayAcc acc []) *> parse
---         EArrayEnd →
---           case acc of
---             ArrayAcc acc' elems → processValue Nothing acc' $ fromArray elems
---             _ → thro $ FlogTheDeveloper parseState
---         EObjectStart → put (Tuple state' $ ObjectAcc acc [] Nothing) *> parse
---         EObjectEnd →
---           case acc of
---             ObjectAcc acc' props mName →
---               case mName of
---                 Nothing → processValue Nothing acc' <<< fromObject $ fromFoldable props
---                 Just name → thro $ FlogTheDeveloper parseState
---             _ → thro $ FlogTheDeveloper parseState
---         EJsonEnd → thro $ FlogTheDeveloper parseState
---     ) result
-
-_processParseT f h i g = 
-  runStateT $ i
-    let process = do
-          Tuple state acc ← get
-          Tuple result state'@(Tuple parseState _) ← f state
-          let thro e = h e
-          either thro (\ event →
-              let processRootValue mVal jVal =
-                    case mVal of
-                      Nothing → put (Tuple state' <<< RootAcc $ Just jVal) *> process
-                      Just val → thro $ FlogTheDeveloper parseState
-                  processArrayValue acc' values jVal = put (Tuple state' <<< ArrayAcc acc' $ snoc values jVal) *> process
-                  processPropValue acc' props jVal name = put (Tuple state' $ ObjectAcc acc' (snoc props $ Tuple name jVal) Nothing) *> process
-                  processValue mStr acc' jVal =
-                    case acc' of
-                      RootAcc mVal → processRootValue mVal jVal
-                      ArrayAcc acc'' values → processArrayValue acc'' values jVal
-                      ObjectAcc acc'' props mName →
-                        maybe
-                          (maybe (thro $ FlogTheDeveloper parseState) (\ str → put (Tuple state' <<< ObjectAcc acc'' props $ Just str) *> process) mStr)
-                          (processPropValue acc'' props jVal)
-                          mName
-                      _ → thro $ FlogTheDeveloper parseState
-              in
-              g event acc thro state' processRootValue processArrayValue processPropValue processValue process
-            )
-            result
+instance DecodeJsonStream Json Accumulator where
+  decodeJsonT acc event =
+    let f = pure <<< Left
+        err = throwError $ ProgrammaticError acc
+        processValue mStr acc' jVal =
+          case acc' of
+            RootAcc → pure $ pure jVal
+            ArrayAcc acc'' values → f <<< ArrayAcc acc'' $ snoc values jVal
+            ObjectAcc acc'' props mName →
+              maybe
+                (maybe err (\ str → f <<< ObjectAcc acc'' props $ Just str) mStr)
+                (\ name → f $ ObjectAcc acc'' (snoc props $ Tuple name jVal) Nothing)
+                mName
+            _ → err
     in
-    process
+    case event of
+      ENumber num → processValue Nothing acc $ fromNumber num
+      ENull → processValue Nothing acc jsonNull
+      EBool bool → processValue Nothing acc $ fromBoolean bool
+      EStringStart _ →
+        case acc of
+          StringAcc _ _ → err
+          _ → f $ StringAcc acc ""
+      EString _ str →
+        case acc of
+          StringAcc acc' str' → f <<< StringAcc acc' $ str' <> str
+          _ → err
+      EStringEnd _ →
+        case acc of
+          StringAcc acc' str → processValue (Just str) acc' $ fromString str
+          _ → err
+      EArrayStart → f $ ArrayAcc acc []
+      EArrayEnd →
+        case acc of
+          ArrayAcc acc' elems → processValue Nothing acc' $ fromArray elems
+          _ → err
+      EObjectStart → f $ ObjectAcc acc [] Nothing
+      EObjectEnd →
+        case acc of
+          ObjectAcc acc' props mName →
+            case mName of
+              Nothing → processValue Nothing acc' <<< fromObject $ fromFoldable props
+              Just _ → err
+          _ → err
+      EJsonEnd → err
 
-parseJsonIncrT ∷ ∀ m s. Monad m ⇒ Source s Char (MaybeT (StateT (Tuple (Tuple ParseState s) Accumulator) m)) ⇒ s → m (Tuple ParseException (Tuple (Tuple ParseState s) Accumulator))
-parseJsonIncrT srcState = _processParseT parseNextJsonValueT pure identity (\ event acc thro state'@(Tuple parseState _) processRootValue processArrayValue processPropValue processValue parse ->
-      case event of
-        ENumber num → processValue Nothing acc $ fromNumber num
-        ENull → processValue Nothing acc jsonNull
-        EBool bool → processValue Nothing acc $ fromBoolean bool
-        EStringStart _ →
-          case acc of
-            StringAcc _ _ → thro $ FlogTheDeveloper parseState
-            _ → put (Tuple state' $ StringAcc acc "") *> parse
-        EString _ str →
-          case acc of
-            StringAcc acc' str' → put (Tuple state' <<< StringAcc acc' $ str' <> str) *> parse
-            _ → thro $ FlogTheDeveloper parseState
-        EStringEnd _ →
-          case acc of
-            StringAcc acc' str → processValue (Just str) acc' $ fromString str
-            _ → thro $ FlogTheDeveloper parseState
-        EArrayStart → put (Tuple state' $ ArrayAcc acc []) *> parse
-        EArrayEnd →
-          case acc of
-            ArrayAcc acc' elems → processValue Nothing acc' $ fromArray elems
-            _ → thro $ FlogTheDeveloper parseState
-        EObjectStart → put (Tuple state' $ ObjectAcc acc [] Nothing) *> parse
-        EObjectEnd →
-          case acc of
-            ObjectAcc acc' props mName →
-              case mName of
-                Nothing → processValue Nothing acc' <<< fromObject $ fromFoldable props
-                Just name → thro $ FlogTheDeveloper parseState
-            _ → thro $ FlogTheDeveloper parseState
-        EJsonEnd → thro $ FlogTheDeveloper parseState
-    ) (Tuple (Tuple initParseState srcState) $ RootAcc Nothing)
+  endJsonDecodeT acc event =
+    let f = pure <<< Left
+        g = pure <<< pure
+        err = throwError $ ProgrammaticError acc
+    in
+    case event of
+      ENumber num →
+        let jVal = fromNumber num in
+        case acc of
+          RootAcc → g $ Just jVal
+          ArrayAcc acc' values → f <<< ArrayAcc acc' $ snoc values jVal
+          ObjectAcc acc' props mName →
+            maybe
+              err
+              (\ name → f $ ObjectAcc acc' (snoc props $ Tuple name jVal) Nothing)
+              mName
+          _ → err
+      EJsonEnd →
+        case acc of
+          RootAcc → g Nothing
+          _ → err
+      _ → err
 
-endParseIncrT ∷ ∀ m s. Monad m ⇒ Source s Char (MaybeT (ExceptT ParseException (StateT (Tuple (Tuple ParseState s) Accumulator) m))) ⇒ Tuple (Tuple ParseState s) Accumulator → m (Tuple (Either ParseException Json) (Tuple (Tuple ParseState s) Accumulator))
-endParseIncrT = _processParseT endParseT throwError runExceptT (\ event acc thro (Tuple parseState _) _ _ _ processValue _ ->
-      case event of
-        ENumber num → processValue Nothing acc $ fromNumber num
-        EJsonEnd →
-          case acc of
-            RootAcc mVal →
-              case mVal of
-                Just val → pure val
-                _ → thro $ FlogTheDeveloper parseState
-            _ → thro $ FlogTheDeveloper parseState
-        _ → thro $ FlogTheDeveloper parseState
+parseJson ∷ String → Either (DecodeExcption Accumulator) Json
+parseJson jsonStr = case do
+  Tuple result state ← runParseT decodeJsonStreamT <<< Tuple (Tuple initParseState $ initStringPosition jsonStr) $ RootAcc
+  either (\ e →
+      case e of
+      ParseError EOF → do
+        Tuple result' (Tuple _ acc) ← runParseT endJsonStreamDecodeT state
+        either (pure <<< Left) (\ mValue →
+            maybe (pure <<< Left $ ProgrammaticError acc) (pure <<< pure) mValue
+          ) result'
+      _ → pure $ Left e
     )
-
-parseJsonT :: forall m s. Monad m => Source s Char (MaybeT (StateT (Tuple (Tuple ParseState s) Accumulator) m)) => Source s Char (MaybeT (ExceptT ParseException (StateT (Tuple (Tuple ParseState s) Accumulator) m))) => MonadThrow ParseException m => s -> m (Tuple (Either ParseException Json) (Tuple (Tuple ParseState s) Accumulator))
-parseJsonT srcState = do
-  Tuple parseException accState <- parseJsonIncrT srcState
-  case parseException of
-    EOF -> endParseIncrT accState
-    _ -> throwError parseException
-
-parseJson ∷ String → Either String Json
-parseJson jsonStr = -- do
-  -- Tuple parseException accState@(Tuple state'@(Tuple _ (SourcePosition _ (LineColumnPosition pos _ line col))) Accumulator) <- parseJsonIncrT $ initSourceState jsonStr
-  -- case parseException of
-  --   EOF -> endParseIncrT accState'
-  --   _ -> throwError parseException
-  let parseNext state acc =
-        let meh (Tuple result state'@(Tuple _ (SourcePosition _ (LineColumnPosition pos _ line col)))) =
-              either (\ e →
-                  case e of
-                    EOF → endParseT state' >>= meh
-                    FlogTheDeveloper _ → throwError "Whoa! Hol' up!" 
-                    DataAfterJson → throwError $ "SyntaxError: Unexpected non-whitespace character after JSON at position " <> show pos <> " (line " <> show (line + 1) <> " column " <> show (col + 1) <> ")"
-                    _ → throwError $ show e
-                ) (\ event →
-                  let processRootValue mVal jVal =
-                        case mVal of
-                          Nothing → parseNext state' <<< RootAcc $ Just jVal
-                          Just val → throwError "Programmatic error!"
-                      processArrayValue acc' = compose (parseNext state' <<< ArrayAcc acc') <<< snoc
-                      processPropValue acc' props jVal name = parseNext state' $ ObjectAcc acc' (snoc props $ Tuple name jVal) Nothing
-                      processValue mStr acc' jVal =
-                        case acc' of
-                          RootAcc mVal → processRootValue mVal jVal
-                          ArrayAcc acc'' values → processArrayValue acc'' values jVal
-                          ObjectAcc acc'' props mName →
-                            maybe
-                              (maybe (throwError "Programmatic error!") (parseNext state' <<< ObjectAcc acc'' props <<< Just) mStr)
-                              (processPropValue acc'' props jVal)
-                              mName
-                          _ → throwError "Programmatic error!"
-                  in
-                  case event of
-                    ENumber num → processValue Nothing acc $ fromNumber num
-                    ENull → processValue Nothing acc jsonNull
-                    EBool bool → processValue Nothing acc $ fromBoolean bool
-                    EStringStart _ →
-                      case acc of
-                        StringAcc _ _ → throwError "Programmatic error!"
-                        _ → parseNext state' $ StringAcc acc ""
-                    EString _ str →
-                      case acc of
-                        StringAcc acc' str' → parseNext state' <<< StringAcc acc' $ str' <> str
-                        _ → throwError "Programmatic error!"
-                    EStringEnd _ →
-                      case acc of
-                        StringAcc acc' str → processValue (Just str) acc' $ fromString str
-                        _ → throwError "Programmatic error!"
-                    EArrayStart → parseNext state' $ ArrayAcc acc []
-                    EArrayEnd →
-                      case acc of
-                        ArrayAcc acc' elems → processValue Nothing acc' $ fromArray elems
-                        _ → throwError "Programmatic error!"
-                    EObjectStart → parseNext state' $ ObjectAcc acc [] Nothing
-                    EObjectEnd →
-                      case acc of
-                        ObjectAcc acc' props mName →
-                          case mName of
-                            Nothing → processValue Nothing acc' <<< fromObject $ fromFoldable props
-                            Just name → throwError "Programmatic error!"
-                        _ → throwError "Programmatic error!"
-                    EJsonEnd →
-                      case acc of
-                        RootAcc mVal →
-                          case mVal of
-                            Just val → pure val
-                            _ → throwError "Programmatic error!"
-                        _ → throwError "Programmatic error!"
-                  )
-                  result
-        in
-        parseNextJsonValueT state >>= meh
-  in
-  case runExceptT <<< parseNext (startState jsonStr) $ RootAcc Nothing of
-    Identity mJsonVal → mJsonVal
+    (\ value → do
+      Tuple (result' ∷ Either (DecodeExcption Accumulator) Json) (Tuple _ acc) ← runParseT decodeJsonStreamT state
+      either (\ e →
+          case e of
+          ParseError EOF → pure $ pure value
+          _ → pure $ Left e
+        ) (const <<< pure <<< Left $ ProgrammaticError acc) result'
+    ) result of
+  Identity result → result

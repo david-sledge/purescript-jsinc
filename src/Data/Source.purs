@@ -1,11 +1,12 @@
 module Data.Source
-  ( InPlaceString(..)
+  ( InPlaceSource(..)
   , LineColumnPosition(..)
   , SourcePosition(..)
   , advance
   , class Position
   , class Source
   , headSource
+  , initStringPosition
   , peekSource
   )
   where
@@ -26,18 +27,18 @@ instance MonadNope m ⇒ Source String Char m where
   peekSource str = liftMaybe $ charAt 0 str
   headSource str = flip Tuple (slice 1 (length str) str) <$> peekSource str
 
-data InPlaceString s = InPlaceString s Int
+data InPlaceSource s = InPlaceSource s Int
 
-derive instance eqInPlaceString ∷ Eq s ⇒ Eq (InPlaceString s)
-derive instance ordInPlaceString ∷ Ord s ⇒ Ord (InPlaceString s)
-derive instance genericInPlaceString ∷ Generic (InPlaceString s) _
+derive instance eqInPlaceSource ∷ Eq s ⇒ Eq (InPlaceSource s)
+derive instance ordInPlaceSource ∷ Ord s ⇒ Ord (InPlaceSource s)
+derive instance genericInPlaceSource ∷ Generic (InPlaceSource s) _
 
-instance showInPlaceString ∷ Show s ⇒ Show (InPlaceString s) where
+instance showInPlaceSource ∷ Show s ⇒ Show (InPlaceSource s) where
   show = genericShow
 
-instance MonadNope m ⇒ Source (InPlaceString String) Char m where
-  peekSource (InPlaceString str pos) = liftMaybe $ charAt pos str
-  headSource s@(InPlaceString str pos) = flip Tuple (InPlaceString str $ pos + 1) <$> peekSource s
+instance MonadNope m ⇒ Source (InPlaceSource String) Char m where
+  peekSource (InPlaceSource str pos) = liftMaybe $ charAt pos str
+  headSource s@(InPlaceSource str pos) = flip Tuple (InPlaceSource str $ pos + 1) <$> peekSource s
 
 data SourcePosition s p = SourcePosition s p
 
@@ -65,6 +66,9 @@ derive instance genericLineColumnPosition ∷ Generic LineColumnPosition _
 
 instance showLineColumnPosition ∷ Show LineColumnPosition where
   show = genericShow
+
+initStringPosition :: forall s. s -> SourcePosition (InPlaceSource s) LineColumnPosition
+initStringPosition str = SourcePosition (InPlaceSource str 0) $ LineColumnPosition 0 false 0 0
 
 instance Applicative m ⇒ Position LineColumnPosition Char m where
   advance c (LineColumnPosition ndx followsCR line col) = 

@@ -16,10 +16,10 @@ import Control.Json.Core.Parser
     , EObjectEnd
     , EJsonEnd
     )
-  , ParseException(EOF, Msg, FlogTheDeveloper, DataAfterJson)
+  , ParseException(EOF, FlogTheDeveloper, DataAfterJson)
   , emptyStartState
-  , endParseT
-  , parseNextJsonValueT
+  , endJsonStreamParseT
+  , parseJsonStreamT
   , stateString)
 import Control.Monad.State.Trans (evalStateT)
 import Control.Promise as Promise
@@ -113,14 +113,14 @@ main = do
       responseBody ← liftEffect $ Response.body response
       reader ← liftEffect $ getReader responseBody
       let parseNext stateArg eofF = do
-            Tuple result state'@(Tuple parseState _) ← parseNextJsonValueT stateArg
+            Tuple result state'@(Tuple parseState _) ← parseJsonStreamT stateArg
             -- hLog "" parseState
             either (\ e → do
                 case e of
                   EOF → eofF state'
-                  Msg msg → log $ "Error: " <> msg
                   FlogTheDeveloper _ → log "Whoa! Hol' up!" 
                   DataAfterJson → log "All done!"
+                  _ → log $ show e
               ) (\ event → do
                 -- hLog "" event
                 case event of
@@ -142,7 +142,7 @@ main = do
                   chunk ∷ ArrayView Uint8 ← liftEffect $ AB.empty 0
                   jsonStr ← liftEffect $ decodeWithOptions chunk {stream: false} decoder
                   parseNext (stateString state jsonStr) \ state' → do
-                    Tuple result' state''@(Tuple parseState' _) ← endParseT state'
+                    Tuple result' state''@(Tuple parseState' _) ← endJsonStreamParseT state'
                     log "All done!")
                 (\ chunk → do
                   -- liftEffect <<< hLog "" $ AB.length chunk

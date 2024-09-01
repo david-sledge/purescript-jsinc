@@ -8,6 +8,7 @@ workspace:
 package:
   dependencies:
   - argonaut
+  - debug
   - unicode
   name: jsinc-parser
   test:
