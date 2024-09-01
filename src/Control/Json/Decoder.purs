@@ -1,4 +1,4 @@
-module Data.Json.Parser
+module Control.Json.Decoder
   ( Accumulator(..)
   , DecodeExcption(..)
   , class DecodeJsonStream
@@ -12,7 +12,7 @@ module Data.Json.Parser
 
 import Prelude
 
-import Control.Json.Core.Parser
+import Control.Json.Parser
   ( Event
     ( EBool
     , ENumber
@@ -26,15 +26,12 @@ import Control.Json.Core.Parser
     , EObjectEnd
     , EJsonEnd
     )
-  , ParseException(EOF, FlogTheDeveloper, DataAfterJson)
+  , ParseException(EOF)
   , ParseState
-  , emptyStartState
   , endJsonStreamParseT
   , initParseState
   , parseJsonStreamT
   , runParseT
-  , startState
-  , stateString
   )
 import Control.Monad.Error.Class (class MonadThrow)
 import Control.Monad.Except (throwError)

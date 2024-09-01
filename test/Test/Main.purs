@@ -5,7 +5,7 @@ module Test.Main
 
 import Prelude
 
-import Control.Json.Core.Parser (Event(..), ParseException(..), ParseState, endJsonStreamParseT, initParseState, parseJsonStreamT)
+import Control.Json.Parser (Event(..), ParseException(..), ParseState, endJsonStreamParseT, initParseState, parseJsonStreamT)
 import Control.Monad.Nope (NopeT, runNopeT)
 import Data.Argonaut
   ( Json
@@ -21,7 +21,7 @@ import Data.Argonaut.Decode.Parser as A
 import Data.Array (uncons)
 import Data.Char (fromCharCode)
 import Data.Either (Either(..), either)
-import Data.Json.Parser (parseJson)
+import Control.Json.Decoder (parseJson)
 import Data.Maybe (Maybe(Just, Nothing), fromMaybe, maybe)
 import Data.Source (class Source, InPlaceSource(InPlaceSource), LineColumnPosition(LineColumnPosition), SourcePosition(SourcePosition), advance, peekSource, headSource)
 import Data.Tuple (Tuple(..))

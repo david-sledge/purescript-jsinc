@@ -1,4 +1,4 @@
-module Control.Json.Core.Parser
+module Control.Json.Parser
   ( CharRead(..)
   , Event(..)
   , Lit(..)
