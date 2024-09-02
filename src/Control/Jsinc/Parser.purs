@@ -1,4 +1,4 @@
-module Control.Json.Parser
+module Control.Jsinc.Parser
   ( CharRead(..)
   , Event(..)
   , Lit(..)
@@ -19,7 +19,7 @@ module Control.Json.Parser
 
 import Prelude
 
-import Control.Monad.Except (ExceptT, catchError, runExceptT, throwError)
+import Control.Monad.Except (ExceptT, catchError, runExceptT, throwError )
 import Control.Monad.Error.Class (class MonadThrow)
 import Control.Monad.Nope (NopeT, runNopeT)
 import Control.Monad.State (class MonadState, StateT, get, modify, runStateT)

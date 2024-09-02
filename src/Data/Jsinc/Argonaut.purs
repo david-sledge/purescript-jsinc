@@ -1,18 +1,12 @@
-module Control.Json.Decoder
-  ( Accumulator(..)
-  , DecodeExcption(..)
-  , class DecodeJsonStream
-  , decodeJsonT
-  , endJsonDecodeT
-  , endJsonStreamDecodeT
+module Data.Jsinc.Argonaut
+  ( JAccumulator
   , parseJson
-  , decodeJsonStreamT
-  )
-  where
+  ) where
 
 import Prelude
 
-import Control.Json.Parser
+import Control.Jsinc.Decoder (class DecodeJsonStream, DecodeExcption(DecodeError, ParseError), decodeJsonStreamT, endJsonStreamDecodeT)
+import Control.Jsinc.Parser
   ( Event
     ( EBool
     , ENumber
@@ -27,16 +21,10 @@ import Control.Json.Parser
     , EJsonEnd
     )
   , ParseException(EOF)
-  , ParseState
-  , endJsonStreamParseT
   , initParseState
-  , parseJsonStreamT
   , runParseT
   )
-import Control.Monad.Error.Class (class MonadThrow)
 import Control.Monad.Except (throwError)
-import Control.Monad.Maybe.Trans (MaybeT)
-import Control.Monad.State (class MonadState, get, modify, put)
 import Data.Argonaut
   ( Json
   , fromArray
@@ -50,50 +38,20 @@ import Data.Array (snoc)
 import Data.Either (Either(Left), either)
 import Data.Identity (Identity(Identity))
 import Data.Maybe (Maybe(Just, Nothing), maybe)
-import Data.Source
-  ( class Source
-  , initStringPosition
-  )
+import Data.Source (initStringPosition)
 import Data.Tuple (Tuple(Tuple))
 import Foreign.Object (fromFoldable)
 
-data DecodeExcption e
-  = ProgrammaticError e
-  | ParseError ParseException
-
-class DecodeJsonStream a c where
-  decodeJsonT ∷ ∀ m. MonadThrow (DecodeExcption c) m ⇒ c → Event → m (Either c a)
-  endJsonDecodeT ∷ ∀ m. MonadThrow (DecodeExcption c) m ⇒ c → Event → m (Either c (Maybe a))
-
-processJsonStreamT ∷ ∀ m a s c' ev c. MonadState (Tuple s c') m ⇒ MonadThrow (DecodeExcption c) m ⇒ (s → m (Tuple (Either ParseException ev) s)) → (c' → ev → m (Either c' a)) → m a
-processJsonStreamT f g =
-  let recurse = do
-        Tuple state acc ← get
-        Tuple result state' ← f state
-        put (Tuple state' acc)
-        either (throwError <<< ParseError) (\ event → do
-            res ← g acc event
-            either (\ acc' → modify (\ (Tuple state'' _) → Tuple state'' acc') *> recurse) pure res
-          ) result
-  in
-  recurse
-
-decodeJsonStreamT ∷ ∀ m a c s. MonadState (Tuple (Tuple ParseState s) c) m ⇒ MonadThrow (DecodeExcption c) m ⇒ Source s Char (MaybeT m) ⇒ DecodeJsonStream a c ⇒ m a
-decodeJsonStreamT = processJsonStreamT parseJsonStreamT decodeJsonT
-
-endJsonStreamDecodeT ∷ ∀ m c s a. MonadState (Tuple (Tuple ParseState s) c) m ⇒ MonadThrow (DecodeExcption c) m ⇒ DecodeJsonStream a c ⇒ m (Maybe a)
-endJsonStreamDecodeT = processJsonStreamT endJsonStreamParseT endJsonDecodeT
-
-data Accumulator
+data JAccumulator
   = RootAcc
-  | StringAcc Accumulator String
-  | ArrayAcc Accumulator (Array Json)
-  | ObjectAcc Accumulator (Array (Tuple String Json)) (Maybe String)
+  | StringAcc JAccumulator String
+  | ArrayAcc JAccumulator (Array Json)
+  | ObjectAcc JAccumulator (Array (Tuple String Json)) (Maybe String)
 
-instance DecodeJsonStream Json Accumulator where
+instance DecodeJsonStream Json JAccumulator JAccumulator m where
   decodeJsonT acc event =
     let f = pure <<< Left
-        err = throwError $ ProgrammaticError acc
+        err = throwError $ DecodeError acc
         processValue mStr acc' jVal =
           case acc' of
             RootAcc → pure $ pure jVal
@@ -139,7 +97,7 @@ instance DecodeJsonStream Json Accumulator where
   endJsonDecodeT acc event =
     let f = pure <<< Left
         g = pure <<< pure
-        err = throwError $ ProgrammaticError acc
+        err = throwError $ DecodeError acc
     in
     case event of
       ENumber num →
@@ -159,7 +117,7 @@ instance DecodeJsonStream Json Accumulator where
           _ → err
       _ → err
 
-parseJson ∷ String → Either (DecodeExcption Accumulator) Json
+parseJson ∷ String → Either (DecodeExcption JAccumulator) Json
 parseJson jsonStr = case do
   Tuple result state ← runParseT decodeJsonStreamT <<< Tuple (Tuple initParseState $ initStringPosition jsonStr) $ RootAcc
   either (\ e →
@@ -167,16 +125,16 @@ parseJson jsonStr = case do
       ParseError EOF → do
         Tuple result' (Tuple _ acc) ← runParseT endJsonStreamDecodeT state
         either (pure <<< Left) (\ mValue →
-            maybe (pure <<< Left $ ProgrammaticError acc) (pure <<< pure) mValue
+            maybe (pure <<< Left $ DecodeError acc) (pure <<< pure) mValue
           ) result'
       _ → pure $ Left e
     )
     (\ value → do
-      Tuple (result' ∷ Either (DecodeExcption Accumulator) Json) (Tuple _ acc) ← runParseT decodeJsonStreamT state
+      Tuple (result' ∷ Either (DecodeExcption JAccumulator) Json) (Tuple _ acc) ← runParseT decodeJsonStreamT state
       either (\ e →
           case e of
           ParseError EOF → pure $ pure value
           _ → pure $ Left e
-        ) (const <<< pure <<< Left $ ProgrammaticError acc) result'
+        ) (const <<< pure <<< Left $ DecodeError acc) result'
     ) result of
   Identity result → result
