@@ -6,7 +6,7 @@ module Control.Jsinc.Parser
   , ParseException(..)
   , ParseState
   , SourceState(..)
-  , caseParseStateOf
+  , caseParseState
   , emptyStartState
   , endJsonStreamParseT
   , initParseState
@@ -117,8 +117,8 @@ showPStateHelper ∷ ParseState → String
 showPStateHelper parseState =
   let str = show parseState in
   case parseState of
-    PRoot → str
-    _ → "(" <> str <> ")"
+  PRoot → str
+  _ → "(" <> str <> ")"
 
 instance showParseState ∷ Show ParseState where
   show PRoot = "PRoot"
@@ -136,20 +136,20 @@ instance showParseState ∷ Show ParseState where
 initParseState ∷ ParseState
 initParseState = PRoot
 
-caseParseStateOf ∷ ∀ a. a → (ParseState → a) → (ParseState → a) → (ParseState → a) → (ParseState → a) → (Lit → Int → ParseState → a) → (Boolean → CharRead → ParseState → a) → (NumberRead → ParseState → a) → (ParseState → a) → (ParseState → a) → (ParseState → a) → ParseState → a
-caseParseStateOf rootF arrStartF objStartF arrF objF litF strF numF postNameF postNameTermF postValF parseState =
+caseParseState ∷ ∀ a. a → (ParseState → a) → (ParseState → a) → (ParseState → a) → (ParseState → a) → (Lit → Int → ParseState → a) → (Boolean → CharRead → ParseState → a) → (NumberRead → ParseState → a) → (ParseState → a) → (ParseState → a) → (ParseState → a) → ParseState → a
+caseParseState rootF arrStartF objStartF arrF objF litF strF numF postNameF postNameTermF postValF parseState =
   case parseState of
-    PRoot → rootF
-    PArrayStart parentState → arrStartF parentState
-    PObjectStart parentState → objStartF parentState
-    PArray parentState → arrF parentState
-    PObject parentState → objF parentState
-    PLiteral lit int parentState → litF lit int parentState
-    PString b charRead parentState → strF b charRead parentState
-    PNumber numberRead parentState → numF numberRead parentState
-    PPostName parentState → postNameF parentState
-    PPostNameTerm parentState → postNameTermF parentState
-    PPostValue parentState → postValF parentState
+  PRoot → rootF
+  PArrayStart parentState → arrStartF parentState
+  PObjectStart parentState → objStartF parentState
+  PArray parentState → arrF parentState
+  PObject parentState → objF parentState
+  PLiteral lit int parentState → litF lit int parentState
+  PString b charRead parentState → strF b charRead parentState
+  PNumber numberRead parentState → numF numberRead parentState
+  PPostName parentState → postNameF parentState
+  PPostNameTerm parentState → postNameTermF parentState
+  PPostValue parentState → postValF parentState
 
 data ParseException
   = CharExpected Char
@@ -223,10 +223,10 @@ stateTransitionFromEndValue ∷ ∀ a m. MonadState (Tuple ParseState a) m ⇒ M
 stateTransitionFromEndValue parentState =
   let next = putParseState $ PPostValue parentState in
   case parentState of
-    PRoot → next
-    PArray _ → next
-    PObject _ → next
-    _ → throwError $ FlogTheDeveloper parentState
+  PRoot → next
+  PArray _ → next
+  PObject _ → next
+  _ → throwError $ FlogTheDeveloper parentState
 
 numberEnd ∷ ∀ m a. Functor m ⇒ MonadState (Tuple ParseState a) m ⇒ MonadThrow ParseException m ⇒ Number → ParseState → m Event
 numberEnd num parentState = ENumber num <$ stateTransitionFromEndValue parentState
@@ -271,10 +271,11 @@ parseJsonStreamT =
                             LNull → "null"
                       in
                       maybe (do
-                          (case lit of
+                          ( case lit of
                             LTrue → EBool true
                             LFalse → EBool false
-                            LNull → ENull)
+                            LNull → ENull
+                          )
                             <$ stateTransitionFromEndValue parentState
                         ) (\ c →
                           char c *> putParseState (PLiteral lit (litPos' + 1) parentState) *> recurse (litPos' + 1)
@@ -367,35 +368,35 @@ parseJsonStreamT =
                               p c $ codePointFromChar c
                         in
                         case charRead' of
-                          CRClean → peekChar \ c cp →
-                            case c of
-                              '\\' → nextCharRead CREscape cpArr
-                              '"' → if A.length cpArr > 0
-                                then pure <<< EString isName $ fromCodePointArray cpArr
-                                else EStringEnd isName <$ anyChar <* putParseState ((if isName then PPostName else PPostValue) parentState)
-                              _ → if isControl cp
-                                then throwError UnescapedControl
-                                else snoc cpArr cp <$ anyChar >>= recurse charRead'
-                          CREscape → peekChar \ c _ →
-                            let esc c' = nextCharRead CRClean $ snoc cpArr (codePointFromChar c') in
-                            case c of
-                              '"' → esc '"'
-                              '\\' → esc '\\'
-                              '/' → esc '/'
-                              'b' → esc '\x0008'
-                              'f' → esc '\x000c'
-                              'n' → esc '\n'
-                              'r' → esc '\r'
-                              't' → esc '\t'
-                              'u' → nextCharRead (CRUnicode 0 0) cpArr
-                              _ → throwError InvalidEscape
-                          CRUnicode charCount value →
-                                if charCount == 4
-                                then putParseState (PString isName CRClean parentState) *> recurse CRClean (snoc cpArr <<< codePointFromChar <<< fromMaybe '\xfffd' $ fromCharCode value)
-                                else peekChar \ _ cp → maybe
-                                  (throwError IncompleteUnicodeEscape)
-                                  (\ digit → nextCharRead (CRUnicode (charCount + 1) $ value * 16 + digit) cpArr)
-                                  $ hexDigitToInt cp
+                        CRClean → peekChar \ c cp →
+                          case c of
+                          '\\' → nextCharRead CREscape cpArr
+                          '"' → if A.length cpArr > 0
+                            then pure <<< EString isName $ fromCodePointArray cpArr
+                            else EStringEnd isName <$ anyChar <* putParseState ((if isName then PPostName else PPostValue) parentState)
+                          _ → if isControl cp
+                            then throwError UnescapedControl
+                            else snoc cpArr cp <$ anyChar >>= recurse charRead'
+                        CREscape → peekChar \ c _ →
+                          let esc c' = nextCharRead CRClean $ snoc cpArr (codePointFromChar c') in
+                          case c of
+                          '"' → esc '"'
+                          '\\' → esc '\\'
+                          '/' → esc '/'
+                          'b' → esc '\x0008'
+                          'f' → esc '\x000c'
+                          'n' → esc '\n'
+                          'r' → esc '\r'
+                          't' → esc '\t'
+                          'u' → nextCharRead (CRUnicode 0 0) cpArr
+                          _ → throwError InvalidEscape
+                        CRUnicode charCount value →
+                          if charCount == 4
+                          then putParseState (PString isName CRClean parentState) *> recurse CRClean (snoc cpArr <<< codePointFromChar <<< fromMaybe '\xfffd' $ fromCharCode value)
+                          else peekChar \ _ cp → maybe
+                            (throwError IncompleteUnicodeEscape)
+                            (\ digit → nextCharRead (CRUnicode (charCount + 1) $ value * 16 + digit) cpArr)
+                            $ hexDigitToInt cp
                     )
                     (\ e →
                       if A.length cpArr > 0
@@ -426,22 +427,22 @@ parseJsonStreamT =
                           *> parse
                       )
                       $ decDigitCharToInt c
-            PPostValue parentState → do
+            PPostValue parentState →
               case parentState of
-                PRoot → whiteSpace $ throwError DataAfterJson
-                PArray gParentState → whiteSpace do
-                  c' ← peek
-                  case c' of
-                    ',' → anyChar *> putParseState parentState *> parse
-                    ']' → EArrayEnd <$ anyChar <* putParseState gParentState <* stateTransitionFromEndValue gParentState
-                    _ → throwError InvalidDelimArrayEnd
-                PObject gParentState → whiteSpace do
-                  c' ← peek
-                  case c' of
-                    ',' → anyChar *> putParseState parentState *> parse
-                    '}' → EObjectEnd <$ anyChar <* putParseState gParentState <* stateTransitionFromEndValue gParentState
-                    _ → throwError InvalidDelimObjectEnd
-                _ → throwError $ FlogTheDeveloper parentState
+              PRoot → whiteSpace $ throwError DataAfterJson
+              PArray gParentState → whiteSpace do
+                c' ← peek
+                case c' of
+                  ',' → anyChar *> putParseState parentState *> parse
+                  ']' → EArrayEnd <$ anyChar <* putParseState gParentState <* stateTransitionFromEndValue gParentState
+                  _ → throwError InvalidDelimArrayEnd
+              PObject gParentState → whiteSpace do
+                c' ← peek
+                case c' of
+                  ',' → anyChar *> putParseState parentState *> parse
+                  '}' → EObjectEnd <$ anyChar <* putParseState gParentState <* stateTransitionFromEndValue gParentState
+                  _ → throwError InvalidDelimObjectEnd
+              _ → throwError $ FlogTheDeveloper parentState
             PNumber numberRead parentState →
               let numberParse numberRead' = do
                     c ← peek
@@ -462,18 +463,18 @@ parseJsonStreamT =
                         if num == 0.0
                         then
                           case c of
-                            '.' → recurse $ NRDecPoint isPos num
-                            'E' → expStart isPos num
-                            'e' → expStart isPos num
-                            _ → intNum
+                          '.' → recurse $ NRDecPoint isPos num
+                          'E' → expStart isPos num
+                          'e' → expStart isPos num
+                          _ → intNum
                         else
                           case c of
-                            '.' → recurse $ NRDecPoint isPos num
-                            'E' → expStart isPos num
-                            'e' → expStart isPos num
-                            _ → digitMaybe
-                              intNum
-                              (recurse <<< NRWholeNum isPos <<< add (num * 10.0))
+                          '.' → recurse $ NRDecPoint isPos num
+                          'E' → expStart isPos num
+                          'e' → expStart isPos num
+                          _ → digitMaybe
+                            intNum
+                            (recurse <<< NRWholeNum isPos <<< add (num * 10.0))
                       NRDecPoint isPos num →
                         digitMaybe
                           (throwError IncompleteExponent)
@@ -482,20 +483,20 @@ parseJsonStreamT =
                         let expStart' = expStart isPos $ num + accF 0.0 in
                         digitMaybe
                           ( case c of
-                              'E' → expStart'
-                              'e' → expStart'
-                              _ → numberEnd (applySign isPos $ num + accF 0.0) parentState
+                            'E' → expStart'
+                            'e' → expStart'
+                            _ → numberEnd (applySign isPos $ num + accF 0.0) parentState
                           )
                           (recurse <<< NRFrac isPos num <<< compose accF <<< fracF)
                       NRExpInd num →
                         let toExpSign = recurse <<< NRExpSign num in
                         case c of
-                          '+' → toExpSign true
-                          '-' → toExpSign false
-                          _ →
-                            digitMaybe
-                              (throwError IncompleteExponent)
-                              (recurse <<< NRExp num true)
+                        '+' → toExpSign true
+                        '-' → toExpSign false
+                        _ →
+                          digitMaybe
+                            (throwError IncompleteExponent)
+                            (recurse <<< NRExp num true)
                       NRExpSign num isPos →
                         digitMaybe
                           (throwError IncompleteExponent)
@@ -520,27 +521,27 @@ endJsonStreamParseT = runStateT $ runExceptT do
     PObject _ → throwError MissingPropName
     PString _ charRead _ →
       case charRead of
-        CRClean → throwError IncompleteString
-        CREscape → throwError IncompleteEscape
-        CRUnicode _ _ → throwError IncompleteUnicodeEscape
+      CRClean → throwError IncompleteString
+      CREscape → throwError IncompleteEscape
+      CRUnicode _ _ → throwError IncompleteUnicodeEscape
     PLiteral _ _ _ → throwError IncompleteLiteral
     PPostName _ → throwError MissingValue
     PPostNameTerm _ → throwError MissingValue
     PPostValue parentState →
       case parentState of
-        PRoot → pure EJsonEnd
-        PArray _ → throwError UnclosedArray
-        PObject _ → throwError UnclosedObject
-        _ → throwError $ FlogTheDeveloper parentState
+      PRoot → pure EJsonEnd
+      PArray _ → throwError UnclosedArray
+      PObject _ → throwError UnclosedObject
+      _ → throwError $ FlogTheDeveloper parentState
     PNumber numberRead parentState →
       case numberRead of
-        NRNegSign → throwError IncompleteWholeNumber
-        NRWholeNum isPos num → numberEnd (applySign isPos num) parentState
-        NRDecPoint _ _ → throwError IncompleteWholeNumber
-        NRFrac isPos num accF → numberEnd (applySign isPos $ num + accF 0.0) parentState
-        NRExpInd _ → throwError IncompleteExponent
-        NRExpSign _ _ → throwError IncompleteExponent
-        NRExp num isPos exp → numberEnd (num * pow 10.0 (applySign isPos exp)) parentState
+      NRNegSign → throwError IncompleteWholeNumber
+      NRWholeNum isPos num → numberEnd (applySign isPos num) parentState
+      NRDecPoint _ _ → throwError IncompleteWholeNumber
+      NRFrac isPos num accF → numberEnd (applySign isPos $ num + accF 0.0) parentState
+      NRExpInd _ → throwError IncompleteExponent
+      NRExpSign _ _ → throwError IncompleteExponent
+      NRExp num isPos exp → numberEnd (num * pow 10.0 (applySign isPos exp)) parentState
 
 startState ∷ ∀ s. s → Tuple ParseState (SourcePosition (InPlaceSource s) LineColumnPosition)
 startState = Tuple initParseState <<< initStringPosition

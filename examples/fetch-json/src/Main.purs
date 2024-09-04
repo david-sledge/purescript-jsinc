@@ -17,22 +17,28 @@ import Control.Jsinc.Parser
     , EJsonEnd
     )
   , ParseException(EOF, FlogTheDeveloper, DataAfterJson)
+  , ParseState
   , emptyStartState
   , endJsonStreamParseT
+  , initParseState
   , parseJsonStreamT
+  , runParseT
   , stateString)
-import Control.Jsinc.Decoder (class DecodeJsonStream, DecodeExcption(DecodeError))
+import Control.Jsinc.Decoder (class DecodeJsonStream, DecodeExcption(DecodeError), decodeJsonStreamT)
+import Control.Monad (class Monad)
 import Control.Monad.Error.Class (class MonadThrow)
 import Control.Monad.Except (throwError)
 import Control.Monad.State.Trans (evalStateT)
+import Control.Monad.Reader (class MonadReader, ask)
 import Control.Promise as Promise
 import Data.ArrayBuffer.Typed as AB
 import Data.ArrayBuffer.Types (ArrayView, Uint8)
 import Data.Either (Either(Left), either)
 import Data.HTTP.Method (Method(GET))
-import Data.HashMap (HashMap, insert)
+import Data.HashMap (HashMap, empty, insert, lookup)
 import Data.Int (fromNumber)
 import Data.Maybe (Maybe(Nothing), maybe)
+import Data.Source (SourcePosition, InPlaceSource, LineColumnPosition, initStringPosition)
 import Data.Tuple (Tuple(Tuple))
 import Effect (Effect)
 import Effect.Aff (launchAff_)
@@ -44,37 +50,19 @@ import Fetch.Core.Duplex (Duplex(Half))
 import Fetch.Core.Request as Request
 import Fetch.Core.Response as Response
 import Unsafe.Coerce (unsafeCoerce)
-import Web.Chain.DOM (el, eln, nd, ndM, txn)
+import Web.Chain.DOM (el, eln, nd, ndM, txn, (+<))
 import Web.Chain.Event (onReady_)
 import Web.Chain.HTML (docBody, table, td, th, tr)
+import Web.DOM (Element)
 import Web.DOM.Class.NodeOp (appendChild)
 import Web.Encoding.TextDecoder (new, decodeWithOptions)
 import Web.Encoding.UtfLabel (utf8)
+import Web.HTML.HTMLTableRowElement (HTMLTableRowElement)
 import Web.HTML.HTMLTableCellElement (HTMLTableCellElement)
 import Web.Streams.ReadableStream (getReader)
 import Web.Streams.Reader (read)
 
 hLog str a = log $ str <> show a
-
-type TRow =
-  { id ∷ Maybe String
-  , type ∷ Maybe String
-  , actor_id ∷ Maybe Int
-  , actor_login ∷ Maybe String
-  , actor_gravatar_id ∷ Maybe String
-  , actor_url ∷ Maybe String
-  , actor_avatar_url ∷ Maybe String
-  , repo_id ∷ Maybe Int
-  , repo_name ∷ Maybe String
-  , repo_url ∷ Maybe String
-  , payload_ref ∷ Maybe String
-  , payload_ref_type ∷ Maybe String
-  , payload_master_branch ∷ Maybe String
-  , payload_description ∷ Maybe String
-  , payload_pusher_type ∷ Maybe String
-  , public ∷ Maybe Boolean
-  , created_at ∷ Maybe String
-  }
 
 data RecsState
   = Root
@@ -91,123 +79,133 @@ data RecsState
 
 newtype TableRowStreamDecoder = TableRowStreamDecoder (Tuple (HashMap Int HTMLTableCellElement) RecsState)
 
-instance MonadEffect m ⇒ DecodeJsonStream Unit TableRowStreamDecoder TableRowStreamDecoder m where
+newStateMVal hashMap acc = pure <<< Tuple (TableRowStreamDecoder $ Tuple hashMap acc)
+
+newState hashMap acc = newStateMVal hashMap acc Nothing
+
+erroneous st = throwError $ DecodeError st
+
+mkCell st hashMap acc str =
+  case acc of
+  Index acc' ndx → do
+    tdElem <- td [] [txn str]
+    newState (insert ndx tdElem hashMap) acc'
+  _ → erroneous st
+
+instance (MonadEffect m, MonadReader Element m) ⇒ DecodeJsonStream Unit TableRowStreamDecoder TableRowStreamDecoder m where
   decodeJsonT st@(TableRowStreamDecoder (Tuple hashMap acc)) event =
-    let newState hashMap' = pure <<< Left <<< TableRowStreamDecoder <<< Tuple hashMap'
-        newAcc acc' = newState hashMap acc'
-        err = throwError $ DecodeError st
-        ahhh acc str =
-          case acc of
-            Index acc' ndx → do
-              tdElem <- td [] [txn str]
-              newState (insert ndx tdElem hashMap) acc'
-            _ → err
+    let newAcc acc' = newState hashMap acc'
+        ahhh acc' str = mkCell st hashMap acc' str
+        nameStart = newAcc $ Name acc ""
+        err = erroneous st
     in
     case event of
-      ENumber num →
-        ahhh acc <<< maybe (show num) show $ fromNumber num
-      ENull → ahhh acc "-"
-      EBool bool → ahhh acc $ show bool
-      EStringStart _ →
-        case acc of
-          Project → newAcc $ Name acc ""
-          Actor → newAcc $ Name acc ""
-          Repo → newAcc $ Name acc ""
-          Payload → newAcc $ Name acc ""
-          Index _ _ → newAcc $ Name acc ""
-          _ → err
-      EString _ str →
-        case acc of
-          Name acc' str' → newAcc <<< Name acc $ str' <> str
-          _ → err
-      EStringEnd _ →
-        case acc of
-          Name acc' str →
-            let indexAcc = newAcc <<< Index acc' in
-            case acc' of
-              Project →
-                case str of
-                  "id" → indexAcc 0
-                  "type" → indexAcc 1
-                  "public" → indexAcc 15
-                  "created_at" → indexAcc 16
-                  "actor" → newAcc ActorProp
-                  "repo" → newAcc RepoProp
-                  "payload" → newAcc PayloadProp
-                  _ → (log $ "unknown name: " <> str) *> (indexAcc (-1))
-              Actor →
-                case str of
-                  "id" → indexAcc 2
-                  "login" → indexAcc 3
-                  "gravatar_id" → indexAcc 4
-                  "url" → indexAcc 5
-                  "avatar_url" → indexAcc 6
-                  _ → (log $ "unknown name: " <> str) *> (indexAcc (-1))
-              Repo →
-                case str of
-                  "id" → indexAcc 7
-                  "name" → indexAcc 8
-                  "url" → indexAcc 9
-                  _ → (log $ "unknown name: " <> str) *> (indexAcc (-1))
-              Payload →
-                case str of
-                  "ref" → indexAcc 10
-                  "ref_type" → indexAcc 11
-                  "master_branch" → indexAcc 12
-                  "description" → indexAcc 13
-                  "pusher_type" → indexAcc 14
-                  _ → (log $ "unknown name: " <> str) *> (indexAcc (-1))
-              Index _ _ → newAcc $ Name acc ""
-              _ → err
-          _ → err
-      EArrayStart →
-        case acc of
-          Root → newAcc Recs
-          _ → err
-      EArrayEnd →
-        case acc of
-          Recs → newAcc Root
-          _ → err
-      EObjectStart →
-        case acc of
-          Recs → newAcc Project
-          ActorProp → newAcc Actor
-          RepoProp → newAcc Repo
-          PayloadProp → newAcc Payload
-          _ → err
-      EObjectEnd →
-        case acc of
-          Project → do
-            -- fill out table row
-            newAcc Recs
-          Actor → newAcc Project
-          Repo → newAcc Project
-          Payload → newAcc Project
-          _ → err
-      EJsonEnd → err
+    ENumber num →
+      ahhh acc <<< maybe (show num) show $ fromNumber num
+    ENull → ahhh acc "-"
+    EBool bool → ahhh acc $ show bool
+    EStringStart _ →
+      case acc of
+      Project → nameStart
+      Actor → nameStart
+      Repo → nameStart
+      Payload → nameStart
+      Index _ _ → nameStart
+      _ → err
+    EString _ str →
+      case acc of
+      Name acc' str' → newAcc <<< Name acc $ str' <> str
+      _ → err
+    EStringEnd _ →
+      case acc of
+      Name acc' str →
+        let indexAcc = newAcc <<< Index acc' in
+        case acc' of
+        Project →
+          case str of
+          "id" → indexAcc 0
+          "type" → indexAcc 1
+          "public" → indexAcc 15
+          "created_at" → indexAcc 16
+          "actor" → newAcc ActorProp
+          "repo" → newAcc RepoProp
+          "payload" → newAcc PayloadProp
+          _ → (log $ "unknown name: " <> str) *> (indexAcc (-1))
+        Actor →
+          case str of
+          "id" → indexAcc 2
+          "login" → indexAcc 3
+          "gravatar_id" → indexAcc 4
+          "url" → indexAcc 5
+          "avatar_url" → indexAcc 6
+          _ → (log $ "unknown name: " <> str) *> (indexAcc (-1))
+        Repo →
+          case str of
+          "id" → indexAcc 7
+          "name" → indexAcc 8
+          "url" → indexAcc 9
+          _ → (log $ "unknown name: " <> str) *> (indexAcc (-1))
+        Payload →
+          case str of
+          "ref" → indexAcc 10
+          "ref_type" → indexAcc 11
+          "master_branch" → indexAcc 12
+          "description" → indexAcc 13
+          "pusher_type" → indexAcc 14
+          _ → (log $ "unknown name: " <> str) *> (indexAcc (-1))
+        Index _ _ → nameStart
+        _ → err
+      _ → err
+    EArrayStart →
+      case acc of
+      Root → newAcc Recs
+      _ → err
+    EArrayEnd →
+      case acc of
+      Recs → newStateMVal hashMap Root $ pure unit
+      _ → err
+    EObjectStart →
+      case acc of
+      Recs → newAcc Project
+      ActorProp → newAcc Actor
+      RepoProp → newAcc Repo
+      PayloadProp → newAcc Payload
+      _ → err
+    EObjectEnd →
+      case acc of
+      Project → do
+        trElem <- tr [] []
+        let buildRow ndx = do
+              trElem +< [maybe (td [] [txn "-"]) pure (lookup ndx hashMap) # ndM] # void
+              when (ndx < 17) <<< buildRow $ ndx + 1
+        buildRow 0
+        tbody <- ask
+        tbody +< [trElem # nd] # void
+        newState empty Recs
+      Actor → newAcc Project
+      Repo → newAcc Project
+      Payload → newAcc Project
+      _ → err
+    EJsonEnd → err
 
-  endJsonDecodeT acc event = throwError $ DecodeError acc
-    -- let f = pure <<< Left
-    --     g = pure <<< pure
-    --     err = throwError $ DecodeError acc
-    -- in
-    -- case event of
-    --   ENumber num →
-    --     let jVal = fromNumber num in
-    --     case acc of
-    --       Root → g $ Just jVal
-    --       ArrayAcc acc' values → f <<< ArrayAcc acc' $ snoc values jVal
-    --       ObjectAcc acc' props mName →
-    --         maybe
-    --           err
-    --           (\ name → f $ ObjectAcc acc' (snoc props $ Tuple name jVal) Nothing)
-    --           mName
-    --       _ → err
-    --   EJsonEnd →
-    --     case acc of
-    --       Root → g Nothing
-    --       _ → err
-    --   _ → err
+  endJsonDecodeT st@(TableRowStreamDecoder (Tuple hashMap acc)) event =
+    let err = erroneous st in
+    case event of
+    ENumber num → mkCell st hashMap acc <<< maybe (show num) show $ fromNumber num
+    EJsonEnd →
+      case acc of
+      Root → newStateMVal hashMap Root Nothing
+      _ → err
+    _ → err
+
+hmmm :: forall a m. MonadReader Element m => MonadEffect m => DecodeJsonStream Unit TableRowStreamDecoder TableRowStreamDecoder m => String -> m (Tuple (Tuple (Maybe Unit) (DecodeExcption TableRowStreamDecoder)) (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) TableRowStreamDecoder))
+hmmm jsonStr = do
+  Tuple result state ← runParseT decodeJsonStreamT <<< Tuple (Tuple initParseState $ initStringPosition jsonStr) <<< TableRowStreamDecoder $ Tuple empty Root
+  either (\ e -> pure $ Tuple (Tuple Nothing e) state)
+    (\ value → do
+      Tuple (result' ∷ Either (DecodeExcption TableRowStreamDecoder) Unit) state'@(Tuple _ acc) ← runParseT decodeJsonStreamT state
+      either (\ e -> pure $ Tuple (Tuple (pure value) e) state') (const <<< pure $ Tuple (Tuple Nothing $ DecodeError acc) state') result'
+    ) result
 
 main ∷ Effect Unit
 main = do

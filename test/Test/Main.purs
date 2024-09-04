@@ -25,6 +25,7 @@ import Data.Jsinc.Argonaut (parseJson)
 import Data.Maybe (Maybe(Just, Nothing), fromMaybe, maybe)
 import Data.Source (class Source, InPlaceSource(InPlaceSource), LineColumnPosition(LineColumnPosition), SourcePosition(SourcePosition), advance, peekSource, headSource)
 import Data.Tuple (Tuple(..))
+import Debug (trace)
 import Effect (Effect)
 import Effect.Class.Console (log)
 import Test.Assert (assert, assertEqual, assertTrue)
@@ -225,7 +226,16 @@ main = do
   compareToArgonaut "\r{\"test\": null \t}"
   compareToArgonaut "\r{\"test\": null \t" -- missing close bracket
 
-compareToArgonaut str = assert (either (const Nothing) Just (A.parseJson str) == either (const Nothing) Just (parseJson str))
+compareToArgonaut str = do
+  let argonautParse = A.parseJson str
+      jsincParse = parseJson str
+      result = either (const Nothing) Just argonautParse == either (const Nothing) Just jsincParse
+  if result
+  then pure unit
+  else do
+    trace argonautParse \ _ ->
+      trace jsincParse \ _ ->
+      assert (either (const Nothing) Just (A.parseJson str) == either (const Nothing) Just (parseJson str))
 
 runTest ∷ ∀ s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Either ParseException Event) → Effect Unit
 runTest state expected =
