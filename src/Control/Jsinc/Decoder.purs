@@ -3,11 +3,11 @@ module Control.Jsinc.Decoder
   , class DecodeJsonStream
   , decodeJsonStreamT
   , decodeJsonT
-  , decodeStreamT
+  , decodeLastChunkT
   , decodeT
   , endJsonDecodeT
   , endJsonStreamDecodeT
-  , endStreamDecodeT
+  , helper
   )
   where
 
@@ -27,9 +27,9 @@ import Control.Monad.Except (ExceptT, throwError)
 import Control.Monad.Maybe.Trans (MaybeT)
 import Control.Monad.State (class MonadState, StateT, get, modify, put)
 import Data.Either (Either(Left), either)
-import Data.Maybe (Maybe(Nothing), maybe)
+import Data.Maybe (Maybe(Just, Nothing), maybe)
 import Data.Source (class Source)
-import Data.Tuple (Tuple(Tuple))
+import Data.Tuple (Tuple(Tuple), fst)
 
 data DecodeExcption e
   = DecodeError e
@@ -81,54 +81,65 @@ endJsonStreamDecodeT ∷ ∀ s a e c m.
   m (Maybe a)
 endJsonStreamDecodeT = processJsonStreamT endJsonStreamParseT endJsonDecodeT
 
-decodeStreamT ∷ ∀ s a c e m.
+helper ∷ forall m s c a e.
   DecodeJsonStream a e c (ExceptT (DecodeExcption e) (StateT (Tuple (Tuple ParseState s) c) m)) ⇒
   Monad m ⇒
   Source s Char (MaybeT (ExceptT (DecodeExcption e) (StateT (Tuple (Tuple ParseState s) c) m))) ⇒
-  Tuple (Tuple ParseState s) c ->
+  a →
+  Tuple (Tuple ParseState s) c →
   m (Tuple (Tuple (Maybe a) (DecodeExcption e)) (Tuple (Tuple ParseState s) c))
-decodeStreamT state = do
-  Tuple result state' ← runParseT decodeJsonStreamT state
-  either (\ e -> pure $ Tuple (Tuple Nothing e) state')
-    (\ value → do
-      -- if a value is returned, the next call...
-      Tuple (result' ∷ Either (DecodeExcption e) a) state'' ← runParseT decodeJsonStreamT state'
-      either
-        -- ... should return an exception...
-        (\ e -> pure $ Tuple (Tuple (pure value) e) state'')
-        -- ... but not a value.
-        (const <<< pure $ Tuple (Tuple Nothing ShouldNeverHappen) state'')
-        result'
-    ) result
+helper a state = do
+  -- When a value has already been supllied, the next call...
+  Tuple (result ∷ Either (DecodeExcption e) a) state' ← runParseT decodeJsonStreamT state
+  pure $ Tuple (either
+    -- ... should return an exception...
+    (\ e → Tuple (Just a) e)
+    -- ... but not a value.
+    (\ a' → Tuple Nothing ShouldNeverHappen)
+    result) state'
 
-endStreamDecodeT ∷ ∀ s a c e m.
+-- | Finish decoding a JSON string.
+decodeLastChunkT ∷ forall m s c a e.
   DecodeJsonStream a e c (ExceptT (DecodeExcption e) (StateT (Tuple (Tuple ParseState s) c) m)) ⇒
   Monad m ⇒
   Source s Char (MaybeT (ExceptT (DecodeExcption e) (StateT (Tuple (Tuple ParseState s) c) m))) ⇒
-  Tuple (Tuple ParseState s) c ->
-  m (Either (DecodeExcption e) (Maybe a))
-endStreamDecodeT state = do
-  Tuple result _ ← runParseT endJsonStreamDecodeT state
-  pure $ either
-    Left
-    (pure <<< maybe Nothing pure)
-    result
+  Maybe a →
+  Tuple (Tuple ParseState s) c →
+  m (Tuple (Tuple (Maybe a) (Maybe (DecodeExcption e))) (Tuple (Tuple ParseState s) c))
+decodeLastChunkT mA state_ = do
+  Tuple (Tuple mA' e') state'' ← maybe
+    (do
+      Tuple result state ← runParseT decodeJsonStreamT state_
+      either
+        (\ e → pure $ Tuple (Tuple Nothing e) state)
+        (\ a → helper a state
+        ) result
+    )
+    (\ a -> helper a state_)
+    mA
+  case e' of
+    ParseError EOF → maybe
+      (do
+        Tuple result state''' ← runParseT endJsonStreamDecodeT state''
+        pure $ (either
+            (\ e'' → Tuple (Tuple mA' $ Just e''))
+            (\ mA'' -> maybe
+              (Tuple (Tuple mA' $ Just ShouldNeverHappen))
+              (const $ Tuple (Tuple mA'' Nothing))
+              mA''
+            )
+            result
+          ) state''')
+      (const <<< pure $ Tuple (Tuple mA' Nothing) state'')
+      mA'
+    _ → pure $ Tuple (Tuple mA' $ pure e') state''
 
+-- | Decode a JSON string as a single chunk.
 decodeT ∷ forall m s c a e.
-  DecodeJsonStream a e c (ExceptT (DecodeExcption e) (StateT (Tuple (Tuple ParseState s) c) m)) =>
-  Monad m => Source s Char (MaybeT (ExceptT (DecodeExcption e) (StateT (Tuple (Tuple ParseState s) c) m))) =>
-  s ->
-  c ->
-  m (Either (DecodeExcption e) a)
-decodeT src c = do
-  Tuple (Tuple mA e) state <- decodeStreamT $ Tuple (Tuple initParseState src) c
-  case e of
-    ParseError EOF →
-      endStreamDecodeT state >>=
-        pure <<< either
-          Left
-          (maybe
-            (maybe (Left ShouldNeverHappen) pure mA)
-            \ a -> maybe (pure a) (const $ Left ShouldNeverHappen) mA
-          )
-    _ -> pure $ Left e
+  DecodeJsonStream a e c (ExceptT (DecodeExcption e) (StateT (Tuple (Tuple ParseState s) c) m)) ⇒
+  Monad m ⇒
+  Source s Char (MaybeT (ExceptT (DecodeExcption e) (StateT (Tuple (Tuple ParseState s) c) m))) ⇒
+  s →
+  c →
+  m (Tuple (Tuple (Maybe a) (Maybe (DecodeExcption e))) (Tuple (Tuple ParseState s) c))
+decodeT src c = decodeLastChunkT Nothing $ Tuple (Tuple initParseState src) c

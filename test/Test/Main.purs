@@ -145,6 +145,12 @@ main = do
     ]
 
   ------------------------------------------------------------------------------
+  runTest3 (Tuple initParseState $ wrap' "")
+    [ Tuple parseJsonStreamT $ Tuple (Left EOF) \ (SourcePosition _ posi) → wrap "" posi
+    , Tuple parseJsonStreamT $ Tuple (Left EOF) identity
+    ]
+
+  ------------------------------------------------------------------------------
   Tuple result _ ← parseJsonStreamT <<< Tuple initParseState $ wrap' "0 "
   assertEqual
     { actual: result
@@ -224,17 +230,30 @@ main = do
     , Right EObjectEnd
     ]
   compareToArgonaut "\r{\"test\": null \t}"
-  compareToArgonaut "\r{\"test\": null \t" -- missing close bracket
+  compareToArgonaut "\r{\"test\": null \t" -- UnclosedObject
+  compareToArgonaut "[5" -- UnclosedArray
+  compareToArgonaut "[\"test\"," -- MissingValue
+  compareToArgonaut "[\"test\"" -- UnclosedArray
+  compareToArgonaut "[\"test" -- IncompleteString
+  compareToArgonaut "{\"test\":0," -- MissingPropName
+  compareToArgonaut "{\"test\":0" -- UnclosedObject
+  compareToArgonaut "{\"test\":" -- MissingValue
+  compareToArgonaut "{\"test\"" -- MissingValue
+  compareToArgonaut "{\"test" -- IncompleteString
+  compareToArgonaut "{} j" -- DataAfterJson
+  compareToArgonaut "[{\"id\":\"2489651045\",\"type\":\"CreateEvent\",\"actor\":{\"id\":665991,\"login\":\"petroav\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/petroav\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/665991?\"},\"repo\":{\"id\":28688495,\"name\":\"petroav/6.828\",\"url\":\"https://api.github.com/repos/petroav/6.828\"},\"payload\":{\"ref\":\"master\",\"ref_type\":\"branch\",\"master_branch\":\"master\",\"description\":\"Solution to homework and assignments from MIT's 6.828 (Operating Systems Engineering). Done in my spare time.\",\"pusher_type\":\"user\"},\"public\":true,\"created_at\":\"2015-01-01T15:00:00Z\"}\n]"
 
+compareToArgonaut ∷ String → Effect Unit
 compareToArgonaut str = do
   let argonautParse = A.parseJson str
       jsincParse = parseJson str
       result = either (const Nothing) Just argonautParse == either (const Nothing) Just jsincParse
   if result
-  then pure unit
+  then
+    pure $ either (const $ trace jsincParse \ _ → unit) (const unit) jsincParse
   else do
-    trace argonautParse \ _ ->
-      trace jsincParse \ _ ->
+    trace argonautParse \ _ →
+      trace jsincParse \ _ →
       assert (either (const Nothing) Just (A.parseJson str) == either (const Nothing) Just (parseJson str))
 
 runTest ∷ ∀ s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Either ParseException Event) → Effect Unit

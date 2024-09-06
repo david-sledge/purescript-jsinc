@@ -24,31 +24,41 @@ import Control.Jsinc.Parser
   , parseJsonStreamT
   , runParseT
   , stateString)
-import Control.Jsinc.Decoder (class DecodeJsonStream, DecodeExcption(DecodeError), decodeJsonStreamT)
+import Control.Jsinc.Decoder
+  ( class DecodeJsonStream
+  , DecodeExcption(DecodeError, ParseError, ShouldNeverHappen)
+  , decodeJsonStreamT
+  , decodeLastChunkT
+  , decodeT
+  , helper
+  )
 import Control.Monad (class Monad)
 import Control.Monad.Error.Class (class MonadThrow)
-import Control.Monad.Except (throwError)
-import Control.Monad.State.Trans (evalStateT)
-import Control.Monad.Reader (class MonadReader, ask)
+import Control.Monad.Except (ExceptT, throwError)
+import Control.Monad.State.Trans (StateT, evalStateT)
+import Control.Monad.Reader (class MonadReader, ReaderT, ask, runReaderT)
 import Control.Promise as Promise
 import Data.ArrayBuffer.Typed as AB
 import Data.ArrayBuffer.Types (ArrayView, Uint8)
 import Data.Either (Either(Left), either)
+import Data.Generic.Rep (class Generic)
 import Data.HTTP.Method (Method(GET))
 import Data.HashMap (HashMap, empty, insert, lookup)
 import Data.Int (fromNumber)
-import Data.Maybe (Maybe(Nothing), maybe)
-import Data.Source (SourcePosition, InPlaceSource, LineColumnPosition, initStringPosition)
+import Data.Maybe (Maybe(Just, Nothing), maybe)
+import Data.Show.Generic (genericShow)
+import Data.Source (SourcePosition(SourcePosition), InPlaceSource(InPlaceSource), LineColumnPosition(LineColumnPosition), initStringPosition)
 import Data.Tuple (Tuple(Tuple))
 import Effect (Effect)
-import Effect.Aff (launchAff_)
-import Effect.Aff.Class (liftAff)
+import Effect.Aff (Aff, launchAff_)
+import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Class.Console (log)
+import Effect.Exception (Error, error)
 import Fetch.Core as Fetch
 import Fetch.Core.Duplex (Duplex(Half))
 import Fetch.Core.Request as Request
-import Fetch.Core.Response as Response
+import Fetch.Core.Response (Response, status, body)
 import Unsafe.Coerce (unsafeCoerce)
 import Web.Chain.DOM (el, eln, nd, ndM, txn, (+<))
 import Web.Chain.Event (onReady_)
@@ -77,6 +87,23 @@ data RecsState
   | Name RecsState String
   | Index RecsState Int
 
+derive instance eqRecsState ∷ Eq RecsState
+derive instance ordRecsState ∷ Ord RecsState
+derive instance genericRecsState ∷ Generic RecsState _
+
+instance showRecsState ∷ Show RecsState where
+  show Root = "Root"
+  show Recs = "Recs"
+  show Project = "Project"
+  show Actor = "Actor"
+  show ActorProp = "ActorProp"
+  show Repo = "Repo"
+  show RepoProp = "RepoProp"
+  show Payload = "Payload"
+  show PayloadProp = "PayloadProp"
+  show (Name recsState string) = "Name (" <> show recsState <> ") " <> show string
+  show (Index recsState int) = "Index (" <> show recsState <> ") " <> show int
+
 newtype TableRowStreamDecoder = TableRowStreamDecoder (Tuple (HashMap Int HTMLTableCellElement) RecsState)
 
 newStateMVal hashMap acc = pure <<< Tuple (TableRowStreamDecoder $ Tuple hashMap acc)
@@ -88,7 +115,7 @@ erroneous st = throwError $ DecodeError st
 mkCell st hashMap acc str =
   case acc of
   Index acc' ndx → do
-    tdElem <- td [] [txn str]
+    tdElem ← td [] [txn str]
     newState (insert ndx tdElem hashMap) acc'
   _ → erroneous st
 
@@ -114,7 +141,7 @@ instance (MonadEffect m, MonadReader Element m) ⇒ DecodeJsonStream Unit TableR
       _ → err
     EString _ str →
       case acc of
-      Name acc' str' → newAcc <<< Name acc $ str' <> str
+      Name acc' str' → newAcc <<< Name acc' $ str' <> str
       _ → err
     EStringEnd _ →
       case acc of
@@ -153,7 +180,9 @@ instance (MonadEffect m, MonadReader Element m) ⇒ DecodeJsonStream Unit TableR
           "description" → indexAcc 13
           "pusher_type" → indexAcc 14
           _ → (log $ "unknown name: " <> str) *> (indexAcc (-1))
-        Index _ _ → nameStart
+        Index acc'' ndx → do
+          tdElem ← td [] [txn str]
+          newState (insert ndx tdElem hashMap) acc''
         _ → err
       _ → err
     EArrayStart →
@@ -174,12 +203,12 @@ instance (MonadEffect m, MonadReader Element m) ⇒ DecodeJsonStream Unit TableR
     EObjectEnd →
       case acc of
       Project → do
-        trElem <- tr [] []
-        let buildRow ndx = do
+        trElem ← tr [] []
+        let buildRow ndx = when (ndx < 17) do
               trElem +< [maybe (td [] [txn "-"]) pure (lookup ndx hashMap) # ndM] # void
-              when (ndx < 17) <<< buildRow $ ndx + 1
+              buildRow $ ndx + 1
         buildRow 0
-        tbody <- ask
+        tbody ← ask
         tbody +< [trElem # nd] # void
         newState empty Recs
       Actor → newAcc Project
@@ -188,24 +217,77 @@ instance (MonadEffect m, MonadReader Element m) ⇒ DecodeJsonStream Unit TableR
       _ → err
     EJsonEnd → err
 
-  endJsonDecodeT st@(TableRowStreamDecoder (Tuple hashMap acc)) event =
-    let err = erroneous st in
+  endJsonDecodeT st@(TableRowStreamDecoder (Tuple hashMap acc)) event = do
+    let err = erroneous st
+    log "Closing things out..."
     case event of
-    ENumber num → mkCell st hashMap acc <<< maybe (show num) show $ fromNumber num
-    EJsonEnd →
-      case acc of
-      Root → newStateMVal hashMap Root Nothing
+      ENumber num → mkCell st hashMap acc <<< maybe (show num) show $ fromNumber num
+      EJsonEnd →
+        case acc of
+        Root → newStateMVal empty Root $ Just Nothing
+        _ → err
       _ → err
-    _ → err
 
-hmmm :: forall a m. MonadReader Element m => MonadEffect m => DecodeJsonStream Unit TableRowStreamDecoder TableRowStreamDecoder m => String -> m (Tuple (Tuple (Maybe Unit) (DecodeExcption TableRowStreamDecoder)) (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) TableRowStreamDecoder))
-hmmm jsonStr = do
-  Tuple result state ← runParseT decodeJsonStreamT <<< Tuple (Tuple initParseState $ initStringPosition jsonStr) <<< TableRowStreamDecoder $ Tuple empty Root
-  either (\ e -> pure $ Tuple (Tuple Nothing e) state)
-    (\ value → do
-      Tuple (result' ∷ Either (DecodeExcption TableRowStreamDecoder) Unit) state'@(Tuple _ acc) ← runParseT decodeJsonStreamT state
-      either (\ e -> pure $ Tuple (Tuple (pure value) e) state') (const <<< pure $ Tuple (Tuple Nothing $ DecodeError acc) state') result'
-    ) result
+whuh jsonStr (Tuple (Tuple parseState (SourcePosition _ position)) acc) = Tuple (Tuple parseState (SourcePosition (InPlaceSource jsonStr 0) position)) acc
+
+letsBegin = Tuple (Tuple initParseState (initStringPosition "")) (TableRowStreamDecoder $ Tuple empty Root)
+
+decodeJsonResponseStream2 ∷ ∀ a c e m.
+  DecodeJsonStream a e c (ExceptT (DecodeExcption e) (StateT (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) c) m)) ⇒
+  MonadEffect m ⇒
+  MonadReader Element m ⇒
+  MonadAff m ⇒
+  Response ->
+  c ->
+  m (Tuple (Tuple (Maybe a) (Maybe (DecodeExcption e))) (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) c))
+decodeJsonResponseStream2 response startAcc = do
+  reader ← liftEffect $ body response >>= getReader
+  decoder ← liftEffect $ new utf8
+  let stream chunkEndF eofF mA aF state = do
+        log "Getting next chunk..."
+        mChunk <- liftAff (Promise.toAffE (unsafeCoerce $ read reader))
+        maybe (do
+            log "No next chunk..."
+            chunk ∷ ArrayView Uint8 ← liftEffect $ AB.empty 0
+            -- empty out any remaining encoded data in the decoder's buffer
+            jsonStr ← liftEffect $ decodeWithOptions chunk {stream: false} decoder
+            log jsonStr
+            chunkEndF jsonStr
+          )
+          (\ chunk → do
+            log <<< show $ AB.length chunk
+            jsonStr ← liftEffect $ decodeWithOptions chunk {stream: true} decoder
+            Tuple result state' ← runParseT decodeJsonStreamT $ whuh jsonStr state
+            either
+              (\ e →
+                case e of
+                ParseError EOF → eofF state'
+                _ → pure $ Tuple (Tuple mA $ Just e) state'
+              )
+              (\ a → aF a state')
+              result
+          )
+          mChunk
+      checkRestOfStream a state = stream
+        (\ jsonStr -> do
+            Tuple (Tuple mA e) state' ← helper a $ whuh jsonStr state
+            pure $ Tuple (Tuple mA
+                case e of
+                ParseError EOF -> Nothing
+                _ -> Just e
+              ) state'
+        )
+        (checkRestOfStream a)
+        (Just a)
+        (\ a' state' -> pure $ Tuple (Tuple (Just a') $ Just ShouldNeverHappen) state')
+        state
+      decodeNextChunk state = stream
+        (\ jsonStr -> decodeLastChunkT Nothing $ whuh jsonStr state)
+        decodeNextChunk
+        Nothing
+        (\ a state' -> checkRestOfStream a state')
+        state
+  decodeNextChunk $ Tuple (Tuple initParseState (initStringPosition "")) startAcc
 
 main ∷ Effect Unit
 main = do
@@ -240,50 +322,21 @@ main = do
         ]
       , nd tableBody
       ]
-    decoder ← new utf8
     launchAff_ do
       request ← liftEffect $ Request.new "test.json"
         { method: GET
         , duplex: Half
         }
       response ← Promise.toAffE $ unsafeCoerce $ Fetch.fetch request
-      responseBody ← liftEffect $ Response.body response
-      reader ← liftEffect $ getReader responseBody
-      let parseNext stateArg eofF = do
-            Tuple result state'@(Tuple parseState _) ← parseJsonStreamT stateArg
-            -- hLog "" parseState
-            either (\ e → do
-                case e of
-                  EOF → eofF state'
-                  FlogTheDeveloper _ → log "Whoa! Hol' up!" 
-                  DataAfterJson → log "All done!"
-                  _ → log $ show e
-              ) (\ event → do
-                -- hLog "" event
-                case event of
-                  ENumber num → parseNext state' eofF
-                  ENull → parseNext state' eofF
-                  EBool bool → parseNext state' eofF
-                  EStringStart isName → parseNext state' eofF
-                  EString isName str → parseNext state' eofF
-                  EStringEnd isName → parseNext state' eofF
-                  EArrayStart → parseNext state' eofF
-                  EArrayEnd → parseNext state' eofF
-                  EObjectStart → parseNext state' eofF
-                  EObjectEnd → parseNext state' eofF
-                  EJsonEnd → parseNext state' eofF
-              ) result
-      let recurse state = liftAff (Promise.toAffE (unsafeCoerce $ read reader))
-            >>= maybe (do
-                  log "No more chunks..."
-                  chunk ∷ ArrayView Uint8 ← liftEffect $ AB.empty 0
-                  jsonStr ← liftEffect $ decodeWithOptions chunk {stream: false} decoder
-                  parseNext (stateString state jsonStr) \ state' → do
-                    Tuple result' state''@(Tuple parseState' _) ← endJsonStreamParseT state'
-                    log "All done!")
-                (\ chunk → do
-                  -- liftEffect <<< hLog "" $ AB.length chunk
-                  jsonStr ← liftEffect $ decodeWithOptions chunk {stream: true} decoder
-                  parseNext (stateString state jsonStr) \ state' → log "Getting next chunk..." *> recurse state')
-      evalStateT (recurse emptyStartState) []
-      liftEffect <<< hLog "response.status" $ Response.status response
+      Tuple (Tuple mA mE) (Tuple (Tuple parseState (SourcePosition source pos)) acc) :: Tuple (Tuple (Maybe Unit) (Maybe (DecodeExcption TableRowStreamDecoder))) (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) TableRowStreamDecoder) <- runReaderT (decodeJsonResponseStream2 response (TableRowStreamDecoder $ Tuple empty Root)) tableBody
+      maybe (pure unit) (\ e -> case e of
+          ParseError err -> log $ show err
+          ShouldNeverHappen -> log "Something happened that shouldn't have"
+          DecodeError e -> do
+            log $ show parseState
+            log $ show pos
+            log $ show source
+            case e of
+              TableRowStreamDecoder (Tuple _ recsState) -> log $ show recsState
+        ) mE
+      liftEffect <<< hLog "response.status" $ status response

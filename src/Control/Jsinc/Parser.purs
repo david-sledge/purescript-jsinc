@@ -325,7 +325,7 @@ parseJsonStreamT =
                     (\ digit →
                       arrStartToArr
                         $ anyChar
-                        *> putParseState (PNumber (NRWholeNum true $ toNumber digit) parseState)
+                        *> putParseState (PNumber (NRWholeNum true $ toNumber digit) $ PArray parentState)
                         *> parse
                     )
                     $ decDigitCharToInt c

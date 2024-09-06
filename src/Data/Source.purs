@@ -67,7 +67,7 @@ derive instance genericLineColumnPosition ∷ Generic LineColumnPosition _
 instance showLineColumnPosition ∷ Show LineColumnPosition where
   show = genericShow
 
-initStringPosition :: forall s. s -> SourcePosition (InPlaceSource s) LineColumnPosition
+initStringPosition ∷ forall s. s → SourcePosition (InPlaceSource s) LineColumnPosition
 initStringPosition str = SourcePosition (InPlaceSource str 0) $ LineColumnPosition 0 false 0 0
 
 instance Applicative m ⇒ Position LineColumnPosition Char m where
