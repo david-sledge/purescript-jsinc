@@ -230,6 +230,8 @@ main = do
     , Right EObjectEnd
     ]
   compareToArgonaut "\r{\"test\": null \t}"
+
+  ------------------------------------------------------------------------------
   compareToArgonaut "\r{\"test\": null \t" -- UnclosedObject
   compareToArgonaut "[5" -- UnclosedArray
   compareToArgonaut "[\"test\"," -- MissingValue
@@ -238,10 +240,19 @@ main = do
   compareToArgonaut "{\"test\":0," -- MissingPropName
   compareToArgonaut "{\"test\":0" -- UnclosedObject
   compareToArgonaut "{\"test\":" -- MissingValue
-  compareToArgonaut "{\"test\"" -- MissingValue
+  compareToArgonaut "{\"test\"" -- MissingNameTerminator
   compareToArgonaut "{\"test" -- IncompleteString
   compareToArgonaut "{} j" -- DataAfterJson
   compareToArgonaut "[{\"id\":\"2489651045\",\"type\":\"CreateEvent\",\"actor\":{\"id\":665991,\"login\":\"petroav\",\"gravatar_id\":\"\",\"url\":\"https://api.github.com/users/petroav\",\"avatar_url\":\"https://avatars.githubusercontent.com/u/665991?\"},\"repo\":{\"id\":28688495,\"name\":\"petroav/6.828\",\"url\":\"https://api.github.com/repos/petroav/6.828\"},\"payload\":{\"ref\":\"master\",\"ref_type\":\"branch\",\"master_branch\":\"master\",\"description\":\"Solution to homework and assignments from MIT's 6.828 (Operating Systems Engineering). Done in my spare time.\",\"pusher_type\":\"user\"},\"public\":true,\"created_at\":\"2015-01-01T15:00:00Z\"}\n]"
+
+  ------------------------------------------------------------------------------
+  runTest (Tuple initParseState $ wrap' "{\"test\"")
+    [ Right EObjectStart
+    , Right (EStringStart true)
+    , Right (EString true "test")
+    , Right (EStringEnd true)
+    , Left EOF
+    ]
 
 compareToArgonaut ∷ String → Effect Unit
 compareToArgonaut str = do
@@ -266,7 +277,7 @@ runTest state expected =
         , expected: x
         }
       runTest state' expected'
-    Nothing → pure unit
+    Nothing → trace state \ _ →pure unit
 
 runTest2 ∷ ∀ s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException Event) (Tuple ParseState s))) (Either ParseException Event)) → Effect Unit
 runTest2 state expected =

@@ -126,7 +126,7 @@ instance showParseState ∷ Show ParseState where
   show (PObjectStart parseState) = "PObjectStart " <> showPStateHelper parseState
   show (PArray parseState) = "PArray " <> showPStateHelper parseState
   show (PObject parseState) = "PObject " <> showPStateHelper parseState
-  show (PLiteral lit int parseState) = "PObjectStart " <> show lit <> " " <> show int <> " " <> showPStateHelper parseState
+  show (PLiteral lit int parseState) = "PLiteral " <> show lit <> " " <> show int <> " " <> showPStateHelper parseState
   show (PString b charRead parseState) = "PString " <> show b <> " " <> show charRead <> " " <> showPStateHelper parseState
   show (PNumber numberRead parseState) = "PNumber " <> show numberRead <> " " <> show parseState
   show (PPostName parseState) = "PPostName " <> showPStateHelper parseState
@@ -162,6 +162,7 @@ data ParseException
   | InvalidPropName
   | InvalidPropNameObjectEnd
   | InvalidDelimObjectEnd
+  | MissingNameTerminator
   | MissingValue
   | IncompleteEscape
   | IncompleteLiteral
@@ -408,16 +409,15 @@ parseJsonStreamT =
             PLiteral lit litPos parentState → literalParse lit litPos parentState
             PPostName parentState → whiteSpace $ char ':' *> putParseState (PPostNameTerm parentState) *> parse
             PPostNameTerm parentState → do
-              putParseState parentState
               whiteSpace do
                 c ← peek
                 case c of
-                  'n' → literalStart LNull
-                  't' → literalStart LTrue
-                  'f' → literalStart LFalse
+                  'n' → putParseState parentState *> literalStart LNull
+                  't' → putParseState parentState *> literalStart LTrue
+                  'f' → putParseState parentState *> literalStart LFalse
                   '[' → EArrayStart <$ anyChar <* putParseState (PArrayStart parentState)
                   '{' → EObjectStart <$ anyChar <* putParseState (PObjectStart parentState)
-                  '"' → stringStart false
+                  '"' → putParseState parentState *> stringStart false
                   '-' → anyChar *> putParseState (PNumber NRNegSign parentState) *> parse
                   _ → maybe
                       (throwError InvalidValue)
@@ -525,7 +525,7 @@ endJsonStreamParseT = runStateT $ runExceptT do
       CREscape → throwError IncompleteEscape
       CRUnicode _ _ → throwError IncompleteUnicodeEscape
     PLiteral _ _ _ → throwError IncompleteLiteral
-    PPostName _ → throwError MissingValue
+    PPostName _ → throwError MissingNameTerminator
     PPostNameTerm _ → throwError MissingValue
     PPostValue parentState →
       case parentState of

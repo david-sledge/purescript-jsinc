@@ -16,45 +16,43 @@ import Control.Jsinc.Parser
     , EObjectEnd
     , EJsonEnd
     )
-  , ParseException(EOF, FlogTheDeveloper, DataAfterJson)
+  , ParseException(EOF)
   , ParseState
-  , emptyStartState
-  , endJsonStreamParseT
   , initParseState
-  , parseJsonStreamT
   , runParseT
-  , stateString)
+  )
 import Control.Jsinc.Decoder
   ( class DecodeJsonStream
   , DecodeExcption(DecodeError, ParseError, ShouldNeverHappen)
   , decodeJsonStreamT
   , decodeLastChunkT
-  , decodeT
   , helper
   )
-import Control.Monad (class Monad)
 import Control.Monad.Error.Class (class MonadThrow)
 import Control.Monad.Except (ExceptT, throwError)
-import Control.Monad.State.Trans (StateT, evalStateT)
-import Control.Monad.Reader (class MonadReader, ReaderT, ask, runReaderT)
+import Control.Monad.State.Trans (StateT)
+import Control.Monad.Reader (class MonadReader, ask, runReaderT)
 import Control.Promise as Promise
 import Data.ArrayBuffer.Typed as AB
 import Data.ArrayBuffer.Types (ArrayView, Uint8)
-import Data.Either (Either(Left), either)
+import Data.Either (either)
 import Data.Generic.Rep (class Generic)
 import Data.HTTP.Method (Method(GET))
 import Data.HashMap (HashMap, empty, insert, lookup)
 import Data.Int (fromNumber)
 import Data.Maybe (Maybe(Just, Nothing), maybe)
-import Data.Show.Generic (genericShow)
-import Data.Source (SourcePosition(SourcePosition), InPlaceSource(InPlaceSource), LineColumnPosition(LineColumnPosition), initStringPosition)
+import Data.Source
+  ( InPlaceSource(InPlaceSource)
+  , LineColumnPosition
+  , SourcePosition(SourcePosition)
+  , initStringPosition
+  )
 import Data.Tuple (Tuple(Tuple))
 import Effect (Effect)
-import Effect.Aff (Aff, launchAff_)
+import Effect.Aff (launchAff_)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Class.Console (log)
-import Effect.Exception (Error, error)
 import Fetch.Core as Fetch
 import Fetch.Core.Duplex (Duplex(Half))
 import Fetch.Core.Request as Request
@@ -67,12 +65,9 @@ import Web.DOM (Element)
 import Web.DOM.Class.NodeOp (appendChild)
 import Web.Encoding.TextDecoder (new, decodeWithOptions)
 import Web.Encoding.UtfLabel (utf8)
-import Web.HTML.HTMLTableRowElement (HTMLTableRowElement)
 import Web.HTML.HTMLTableCellElement (HTMLTableCellElement)
 import Web.Streams.ReadableStream (getReader)
 import Web.Streams.Reader (read)
-
-hLog str a = log $ str <> show a
 
 data RecsState
   = Root
@@ -106,12 +101,16 @@ instance showRecsState ∷ Show RecsState where
 
 newtype TableRowStreamDecoder = TableRowStreamDecoder (Tuple (HashMap Int HTMLTableCellElement) RecsState)
 
+newStateMVal :: forall m c. Applicative m => HashMap Int HTMLTableCellElement -> RecsState -> c -> m (Tuple TableRowStreamDecoder c)
 newStateMVal hashMap acc = pure <<< Tuple (TableRowStreamDecoder $ Tuple hashMap acc)
 
+newState :: forall m a. Applicative m => HashMap Int HTMLTableCellElement -> RecsState -> m (Tuple TableRowStreamDecoder (Maybe a))
 newState hashMap acc = newStateMVal hashMap acc Nothing
 
+erroneous :: forall m a e a'. MonadThrow (DecodeExcption e a') m => e -> m a
 erroneous st = throwError $ DecodeError st
 
+mkCell :: forall m a e a'. MonadEffect m => MonadThrow (DecodeExcption e a') m => e -> HashMap Int HTMLTableCellElement -> RecsState -> String -> m (Tuple TableRowStreamDecoder (Maybe a))
 mkCell st hashMap acc str =
   case acc of
   Index acc' ndx → do
@@ -228,19 +227,21 @@ instance (MonadEffect m, MonadReader Element m) ⇒ DecodeJsonStream Unit TableR
         _ → err
       _ → err
 
+whuh :: forall s c a p s'. s' -> Tuple (Tuple a (SourcePosition s p)) c -> Tuple (Tuple a (SourcePosition (InPlaceSource s') p)) c
 whuh jsonStr (Tuple (Tuple parseState (SourcePosition _ position)) acc) = Tuple (Tuple parseState (SourcePosition (InPlaceSource jsonStr 0) position)) acc
 
+letsBegin :: Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) TableRowStreamDecoder
 letsBegin = Tuple (Tuple initParseState (initStringPosition "")) (TableRowStreamDecoder $ Tuple empty Root)
 
-decodeJsonResponseStream2 ∷ ∀ a c e m.
-  DecodeJsonStream a e c (ExceptT (DecodeExcption e) (StateT (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) c) m)) ⇒
+decodeJsonResponseStream ∷ ∀ a c e m.
+  DecodeJsonStream a e c (ExceptT (DecodeExcption e a) (StateT (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) c) m)) ⇒
   MonadEffect m ⇒
   MonadReader Element m ⇒
   MonadAff m ⇒
   Response ->
   c ->
-  m (Tuple (Tuple (Maybe a) (Maybe (DecodeExcption e))) (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) c))
-decodeJsonResponseStream2 response startAcc = do
+  m (Tuple (Tuple (Maybe a) (Maybe (DecodeExcption e a))) (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) c))
+decodeJsonResponseStream response startAcc = do
   reader ← liftEffect $ body response >>= getReader
   decoder ← liftEffect $ new utf8
   let stream chunkEndF eofF mA aF state = do
@@ -279,13 +280,13 @@ decodeJsonResponseStream2 response startAcc = do
         )
         (checkRestOfStream a)
         (Just a)
-        (\ a' state' -> pure $ Tuple (Tuple (Just a') $ Just ShouldNeverHappen) state')
+        (\ a' -> pure <<< Tuple (Tuple (Just a) <<< Just <<< ShouldNeverHappen $ Just a'))
         state
       decodeNextChunk state = stream
         (\ jsonStr -> decodeLastChunkT Nothing $ whuh jsonStr state)
         decodeNextChunk
         Nothing
-        (\ a state' -> checkRestOfStream a state')
+        checkRestOfStream
         state
   decodeNextChunk $ Tuple (Tuple initParseState (initStringPosition "")) startAcc
 
@@ -328,15 +329,15 @@ main = do
         , duplex: Half
         }
       response ← Promise.toAffE $ unsafeCoerce $ Fetch.fetch request
-      Tuple (Tuple mA mE) (Tuple (Tuple parseState (SourcePosition source pos)) acc) :: Tuple (Tuple (Maybe Unit) (Maybe (DecodeExcption TableRowStreamDecoder))) (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) TableRowStreamDecoder) <- runReaderT (decodeJsonResponseStream2 response (TableRowStreamDecoder $ Tuple empty Root)) tableBody
+      Tuple (Tuple (mA :: Maybe Unit) mE) (Tuple (Tuple parseState (SourcePosition source pos)) _) <- runReaderT (decodeJsonResponseStream response (TableRowStreamDecoder $ Tuple empty Root)) tableBody
       maybe (pure unit) (\ e -> case e of
           ParseError err -> log $ show err
-          ShouldNeverHappen -> log "Something happened that shouldn't have"
-          DecodeError e -> do
+          ShouldNeverHappen mA' -> log $ "Something happened that shouldn't have: " <> show mA <> " and " <> show mA'
+          DecodeError e' -> do
             log $ show parseState
             log $ show pos
             log $ show source
-            case e of
+            case e' of
               TableRowStreamDecoder (Tuple _ recsState) -> log $ show recsState
         ) mE
-      liftEffect <<< hLog "response.status" $ status response
+      log $ "response.status: " <> show (status response)

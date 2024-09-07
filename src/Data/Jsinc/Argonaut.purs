@@ -36,7 +36,7 @@ import Data.Argonaut
   , jsonNull
   )
 import Data.Array (snoc)
-import Data.Either (Either(Left, Right), either)
+import Data.Either (Either(Left, Right))
 import Data.Identity (Identity(Identity))
 import Data.Maybe (Maybe(Just, Nothing), maybe)
 import Data.Source (initStringPosition)
@@ -118,7 +118,7 @@ instance DecodeJsonStream Json JAccumulator JAccumulator m where
       _ → err
     _ → err
 
-parseJson ∷ String → Either (DecodeExcption JAccumulator) Json
+parseJson ∷ String → Either (DecodeExcption JAccumulator Json) Json
 parseJson jsonStr =
   case decodeT (initStringPosition jsonStr) RootAcc of
-  Identity (Tuple (Tuple mA mE) parseState) → maybe (maybe (Left ShouldNeverHappen) (Right <<< identity) mA) Left mE
+  Identity (Tuple (Tuple mA mE) _) → maybe (maybe (Left $ ShouldNeverHappen Nothing) (Right <<< identity) mA) Left mE
