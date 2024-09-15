@@ -6,7 +6,6 @@ module Test.Main
 import Prelude
 
 import Control.Jsinc.Parser (Event(..), ParseException(..), ParseState, endJsonStreamParseT, initParseState, parseJsonStreamT)
-import Control.Monad.Nope (NopeT, runNopeT)
 import Data.Argonaut
   ( Json
   , fromArray
@@ -23,7 +22,7 @@ import Data.Char (fromCharCode)
 import Data.Either (Either(..), either)
 import Data.Jsinc.Argonaut (parseJson)
 import Data.Maybe (Maybe(Just, Nothing), fromMaybe, maybe)
-import Data.Source (class Source, InPlaceSource(InPlaceSource), LineColumnPosition(LineColumnPosition), SourcePosition(SourcePosition), advance, peekSource, headSource)
+import Data.Source (class Source, InPlaceSource(InPlaceSource), LineColumnPosition(LineColumnPosition), SourcePosition(SourcePosition), advance, peekSource, headSource, refillSource)
 import Data.Tuple (Tuple(..))
 import Debug (trace)
 import Effect (Effect)
@@ -35,20 +34,26 @@ main ∷ Effect Unit
 main = do
   let source = InPlaceSource "null" 0
 
-  argh ← runNopeT $ peekSource source
+  argh ← peekSource source
   assertEqual
     { actual: argh
     , expected: Just 'n'
     }
 
-  argh ← runNopeT $ headSource source
+  argh ← headSource source
   assertEqual
     { actual: argh
     , expected: Just (Tuple 'n' $ InPlaceSource "null" 1)
     }
 
+  argh' ← refillSource "   " source
+  assertEqual
+    { actual: argh'
+    , expected: InPlaceSource "null   " 0
+    }
+
   maybe (pure unit) (\ (Tuple c srcPos) → do
-      argh ← runNopeT $ headSource srcPos
+      argh ← headSource srcPos
       assertEqual
         { actual: argh
         , expected: Just (Tuple 'u' $ InPlaceSource "null" 2)
@@ -66,27 +71,27 @@ main = do
   let srcPos = SourcePosition source pos
       state = Tuple initParseState srcPos
 
-  argh ← runNopeT $ peekSource srcPos
+  argh ← peekSource srcPos
   assertEqual
     { actual: argh
     , expected: Just 'n'
     }
 
-  argh ← runNopeT $ headSource srcPos
+  argh ← headSource srcPos
   assertEqual
     { actual: argh
     , expected: Just (Tuple 'n' $ SourcePosition (InPlaceSource "null" 1) (LineColumnPosition 1 false 0 1))
     }
 
   maybe (pure unit) (\ (Tuple c srcPos) → do
-      argh ← runNopeT $ headSource srcPos
+      argh ← headSource srcPos
       assertEqual
         { actual: argh
         , expected: Just (Tuple 'u' $ SourcePosition (InPlaceSource "null" 2) (LineColumnPosition 2 false 0 2))
         }
     ) argh
 
-  argh ← runNopeT $ headSource srcPos
+  argh ← headSource srcPos
   assertEqual
     { actual: argh
     , expected: Just (Tuple 'n' $ SourcePosition (InPlaceSource "null" 1) (LineColumnPosition 1 false 0 1))
@@ -103,9 +108,9 @@ main = do
 
   ------------------------------------------------------------------------------
   runTest3 (Tuple initParseState $ wrap' " nul")
-    [ Tuple parseJsonStreamT $ Tuple (Left EOF) \ (SourcePosition _ posi) → wrap "l " posi
-    , Tuple parseJsonStreamT $ Tuple (Right ENull) identity
-    , Tuple parseJsonStreamT $ Tuple (Left EOF) identity
+    [ Tuple parseJsonStreamT $ Tuple (Left EOF) $ refillSource "l "
+    , Tuple parseJsonStreamT $ Tuple (Right ENull) pure
+    , Tuple parseJsonStreamT $ Tuple (Left EOF) pure
     ]
 
   ------------------------------------------------------------------------------
@@ -136,18 +141,18 @@ main = do
 
   ------------------------------------------------------------------------------
   runTest3 (Tuple initParseState $ wrap' "\"rtr\\u00")
-    [ Tuple parseJsonStreamT $ Tuple (Right $ EStringStart false) identity
-    , Tuple parseJsonStreamT $ Tuple (Right $ EString false "rtr") identity
-    , Tuple parseJsonStreamT $ Tuple (Left EOF) \ (SourcePosition _ posi) → wrap "35ue\" " posi
-    , Tuple parseJsonStreamT $ Tuple (Right $ EString false "5ue") identity
-    , Tuple parseJsonStreamT $ Tuple (Right $ EStringEnd false) identity
-    , Tuple parseJsonStreamT $ Tuple (Left EOF) identity
+    [ Tuple parseJsonStreamT $ Tuple (Right $ EStringStart false) pure
+    , Tuple parseJsonStreamT $ Tuple (Right $ EString false "rtr") pure
+    , Tuple parseJsonStreamT $ Tuple (Left EOF) $ refillSource "35ue\" "
+    , Tuple parseJsonStreamT $ Tuple (Right $ EString false "5ue") pure
+    , Tuple parseJsonStreamT $ Tuple (Right $ EStringEnd false) pure
+    , Tuple parseJsonStreamT $ Tuple (Left EOF) pure
     ]
 
   ------------------------------------------------------------------------------
   runTest3 (Tuple initParseState $ wrap' "")
-    [ Tuple parseJsonStreamT $ Tuple (Left EOF) \ (SourcePosition _ posi) → wrap "" posi
-    , Tuple parseJsonStreamT $ Tuple (Left EOF) identity
+    [ Tuple parseJsonStreamT $ Tuple (Left EOF) $ refillSource ""
+    , Tuple parseJsonStreamT $ Tuple (Left EOF) pure
     ]
 
   ------------------------------------------------------------------------------
@@ -267,7 +272,7 @@ compareToArgonaut str = do
       trace jsincParse \ _ →
       assert (either (const Nothing) Just (A.parseJson str) == either (const Nothing) Just (parseJson str))
 
-runTest ∷ ∀ s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Either ParseException Event) → Effect Unit
+runTest ∷ ∀ s. Source s String Char Effect ⇒ Tuple ParseState s → Array (Either ParseException Event) → Effect Unit
 runTest state expected =
   case uncons expected of
     Just { head: x, tail: expected' } → do
@@ -279,7 +284,7 @@ runTest state expected =
       runTest state' expected'
     Nothing → trace state \ _ →pure unit
 
-runTest2 ∷ ∀ s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException Event) (Tuple ParseState s))) (Either ParseException Event)) → Effect Unit
+runTest2 ∷ ∀ s. Source s String Char Effect ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException Event) (Tuple ParseState s))) (Either ParseException Event)) → Effect Unit
 runTest2 state expected =
   case uncons expected of
     Just { head: Tuple f x, tail: expected' } → do
@@ -291,7 +296,7 @@ runTest2 state expected =
       runTest2 state' expected'
     Nothing → pure unit
 
-runTest3 ∷ ∀ s. Source s Char (NopeT Effect) ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException Event) (Tuple ParseState s))) (Tuple (Either ParseException Event) (s → s))) → Effect Unit
+runTest3 ∷ ∀ s. Source s String Char Effect ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException Event) (Tuple ParseState s))) (Tuple (Either ParseException Event) (s → Effect s))) → Effect Unit
 runTest3 state expected =
   case uncons expected of
     Just { head: Tuple f (Tuple x g), tail: expected' } → do
@@ -300,5 +305,6 @@ runTest3 state expected =
         { actual: result
         , expected: x
         }
-      runTest3 (Tuple parseState $ g srcState) expected'
+      srcState' ← g srcState
+      runTest3 (Tuple parseState srcState') expected'
     Nothing → pure unit

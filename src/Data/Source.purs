@@ -8,24 +8,27 @@ module Data.Source
   , headSource
   , initStringPosition
   , peekSource
+  , refillSource
   )
   where
 
 import Prelude
 
-import Control.Monad.Nope (class MonadNope, liftMaybe)
 import Data.Generic.Rep (class Generic)
+import Data.Maybe (Maybe(Just, Nothing), maybe)
 import Data.Show.Generic (genericShow)
 import Data.String.CodeUnits (charAt, length, slice)
 import Data.Tuple (Tuple(Tuple))
 
-class MonadNope m <= Source s c m where
-  peekSource ∷ s → m c
-  headSource ∷ s → m (Tuple c s)
+class Source s d c m | s → d, d → c where
+  peekSource ∷ s → m (Maybe c)
+  headSource ∷ s → m (Maybe (Tuple c s))
+  refillSource ∷ d → s → m s
 
-instance MonadNope m ⇒ Source String Char m where
-  peekSource str = liftMaybe $ charAt 0 str
-  headSource str = flip Tuple (slice 1 (length str) str) <$> peekSource str
+instance Monad m ⇒ Source String String Char m where
+  peekSource str = pure $ charAt 0 str
+  headSource str = peekSource str >>= pure <<< map (flip Tuple $ slice 1 (length str) str)
+  refillSource str s = pure $ s <> str
 
 data InPlaceSource s = InPlaceSource s Int
 
@@ -36,9 +39,10 @@ derive instance genericInPlaceSource ∷ Generic (InPlaceSource s) _
 instance showInPlaceSource ∷ Show s ⇒ Show (InPlaceSource s) where
   show = genericShow
 
-instance MonadNope m ⇒ Source (InPlaceSource String) Char m where
-  peekSource (InPlaceSource str pos) = liftMaybe $ charAt pos str
-  headSource s@(InPlaceSource str pos) = flip Tuple (InPlaceSource str $ pos + 1) <$> peekSource s
+instance Monad m ⇒ Source (InPlaceSource String) String Char m where
+  peekSource (InPlaceSource str pos) = pure $ charAt pos str
+  headSource s@(InPlaceSource str pos) = peekSource s >>= pure <<< map (flip Tuple <<< InPlaceSource str $ pos + 1)
+  refillSource str' (InPlaceSource str pos) = pure $ InPlaceSource (slice pos (length str) str <> str') 0
 
 data SourcePosition s p = SourcePosition s p
 
@@ -52,11 +56,10 @@ instance showSourcePosition ∷ (Show s, Show p) ⇒ Show (SourcePosition s p) w
 class Position p c m where
   advance ∷ c → p → m p
 
-instance (MonadNope m, Position p c m, Source s c m) ⇒ Source (SourcePosition s p) c m where
+instance (Monad m, Position p c m, Source s d c m) ⇒ Source (SourcePosition s p) d c m where
   peekSource (SourcePosition s _) = peekSource s
-  headSource (SourcePosition s p) = do
-    Tuple c s' ← headSource s
-    Tuple c <<< SourcePosition s' <$> advance c p
+  headSource (SourcePosition s p) = headSource s >>= maybe (pure Nothing) (\ (Tuple c s') → Just <<< Tuple c <<< SourcePosition s' <$> advance c p)
+  refillSource d (SourcePosition s p) = refillSource d s >>= pure <<< flip SourcePosition p
 
 data LineColumnPosition = LineColumnPosition Int Boolean Int Int
 
@@ -71,7 +74,7 @@ initStringPosition ∷ ∀ s. s → SourcePosition (InPlaceSource s) LineColumnP
 initStringPosition str = SourcePosition (InPlaceSource str 0) $ LineColumnPosition 0 false 0 0
 
 instance Applicative m ⇒ Position LineColumnPosition Char m where
-  advance c (LineColumnPosition ndx followsCR line col) = 
+  advance c (LineColumnPosition ndx followsCR line col) =
     let f = LineColumnPosition (ndx + 1) in
     pure case c of
       '\r' → f true (line + 1) 0

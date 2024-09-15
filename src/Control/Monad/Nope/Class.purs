@@ -30,7 +30,7 @@ import Data.Maybe (Maybe(..), maybe)
 -- |
 -- | - Left zero: `nope >>= h = nope`
 -- |
-class Monad m <= MonadNuhUh m where
+class Monad m ⇐ MonadNuhUh m where
   nope ∷ ∀ a. m a
 
 -- | The `MonadNope` type class represents those monads which support catching
@@ -47,7 +47,7 @@ class Monad m <= MonadNuhUh m where
 -- | - Catch: `yup nope h = h`
 -- | - Pure: `yup (pure a) h = pure a`
 -- |
-class MonadNuhUh m <= MonadNope m where
+class MonadNuhUh m ⇐ MonadNope m where
   yup ∷ ∀ a. m a → m a → m a
 
 instance monadNuhUhMaybeT ∷ Monad m ⇒ MonadNuhUh (MaybeT m) where

@@ -236,13 +236,13 @@ applySign ∷ ∀ a. Ring a ⇒ Boolean → a → a
 applySign isPos = if isPos then identity else negate
 
 --------------------------------------------------------------------------------
-peek ∷ ∀ m a s c. Monad m ⇒ Source s c (NopeT m) ⇒ ExceptT ParseException (StateT (Tuple a s) m) c
-peek = getSourceState >>= lift <<< lift <<< runNopeT <<< peekSource >>= maybe (throwError EOF) pure
+peek ∷ ∀ m a s d c. Monad m ⇒ Source s d c m ⇒ ExceptT ParseException (StateT (Tuple a s) m) c
+peek = getSourceState >>= lift <<< lift <<< peekSource >>= maybe (throwError EOF) pure
 
-anyChar ∷ ∀ m a s. Monad m ⇒ Source s Char (NopeT m) ⇒ ExceptT ParseException (StateT (Tuple a s) m) Char
-anyChar = getSourceState >>= lift <<< lift <<< runNopeT <<< headSource >>= maybe (throwError EOF) (\ (Tuple c s') → c <$ modify \ (Tuple parseState _) → Tuple parseState s')
+anyChar ∷ ∀ m a s. Monad m ⇒ Source s String Char m ⇒ ExceptT ParseException (StateT (Tuple a s) m) Char
+anyChar = getSourceState >>= lift <<< lift <<< headSource >>= maybe (throwError EOF) (\ (Tuple c s') → c <$ modify \ (Tuple parseState _) → Tuple parseState s')
 
-char ∷ ∀ m a s. Monad m ⇒ Source s Char (NopeT m) ⇒ Char → ExceptT ParseException (StateT (Tuple a s) m) Char
+char ∷ ∀ m a s. Monad m ⇒ Source s String Char m ⇒ Char → ExceptT ParseException (StateT (Tuple a s) m) Char
 char c = do
   c' ← peek
   if c == c'
@@ -252,7 +252,7 @@ char c = do
 runParseT ∷ ∀ m s e a. ExceptT e (StateT m s) a → m → s (Tuple (Either e a) m)
 runParseT = runStateT <<< runExceptT
 
-parseJsonStreamT ∷ ∀ m s. Monad m ⇒ Source s Char (NopeT m) ⇒ Tuple ParseState s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
+parseJsonStreamT ∷ ∀ m s. Monad m ⇒ Source s String Char m ⇒ Tuple ParseState s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
 parseJsonStreamT =
   runParseT
     let parse = do
