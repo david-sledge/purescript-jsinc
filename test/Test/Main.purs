@@ -100,7 +100,7 @@ main = do
   Tuple result state ← parseJsonStreamT state
   assertEqual
     { actual: result
-    , expected: Right ENull
+    , expected: Right $ Just ENull
     }
 
   let wrap str posi = SourcePosition (InPlaceSource str 0) posi
@@ -108,131 +108,133 @@ main = do
 
   ------------------------------------------------------------------------------
   runTest3 (Tuple initParseState $ wrap' " nul")
-    [ Tuple parseJsonStreamT $ Tuple (Left EOF) $ refillSource "l "
-    , Tuple parseJsonStreamT $ Tuple (Right ENull) pure
-    , Tuple parseJsonStreamT $ Tuple (Left EOF) pure
+    [ Tuple parseJsonStreamT <<< Tuple (Right Nothing) $ refillSource "l "
+    , Tuple parseJsonStreamT $ Tuple (Right $ Just ENull) pure
+    , Tuple parseJsonStreamT $ Tuple (Right Nothing) pure
     ]
 
   ------------------------------------------------------------------------------
-  runTest (Tuple initParseState $ wrap' "\tfalse \n") [Right (EBool false)]
+  runTest (Tuple initParseState $ wrap' "\tfalse \n") [Right $ Just (EBool false)]
   compareToArgonaut "\tfalse \n"
 
   ------------------------------------------------------------------------------
-  runTest (Tuple initParseState $ wrap' "\ttrue") [Right (EBool true)]
+  runTest (Tuple initParseState $ wrap' "\ttrue") [Right $ Just (EBool true)]
   compareToArgonaut "\ttrue"
 
   ------------------------------------------------------------------------------
   runTest (Tuple initParseState $ wrap' "\"\\ud800\\udc00\"")
-    [ Right $ EStringStart false
-    , Right (EString false "\xd800\xdc00")
-    , Right $ EStringEnd false
-    , Left EOF
+    [ Right <<< Just $ EStringStart false
+    , Right <<< Just $ EString false "\xd800\xdc00"
+    , Right <<< Just $ EStringEnd false
+    , Right Nothing
     ]
   compareToArgonaut "\"\\ud800\\udc00\""
 
   ------------------------------------------------------------------------------
   runTest (Tuple initParseState $ wrap' "\"rtr\\u0035\\nue\"")
-    [ Right $ EStringStart false
-    , Right $ EString false "rtr5\nue"
-    , Right $ EStringEnd false
-    , Left EOF
+    [ Right <<< Just $ EStringStart false
+    , Right <<< Just $ EString false "rtr5\nue"
+    , Right <<< Just $ EStringEnd false
+    , Right Nothing
     ]
   compareToArgonaut "\"rtr\\u0035\\nue\""
 
   ------------------------------------------------------------------------------
   runTest3 (Tuple initParseState $ wrap' "\"rtr\\u00")
-    [ Tuple parseJsonStreamT $ Tuple (Right $ EStringStart false) pure
-    , Tuple parseJsonStreamT $ Tuple (Right $ EString false "rtr") pure
-    , Tuple parseJsonStreamT $ Tuple (Left EOF) $ refillSource "35ue\" "
-    , Tuple parseJsonStreamT $ Tuple (Right $ EString false "5ue") pure
-    , Tuple parseJsonStreamT $ Tuple (Right $ EStringEnd false) pure
-    , Tuple parseJsonStreamT $ Tuple (Left EOF) pure
+    [ Tuple parseJsonStreamT $ Tuple (Right <<< Just $ EStringStart false) pure
+    , Tuple parseJsonStreamT $ Tuple (Right <<< Just $ EString false "rtr") pure
+    -- , Tuple parseJsonStreamT $ Tuple (Right Nothing) $ refillSource "35ue\" "
+    -- , Tuple parseJsonStreamT $ Tuple (Right <<< Just $ EString false "5ue") pure
+    -- , Tuple parseJsonStreamT $ Tuple (Right <<< Just $ EStringEnd false) pure
+    -- , Tuple parseJsonStreamT $ Tuple (Right Nothing) pure
     ]
 
   ------------------------------------------------------------------------------
   runTest3 (Tuple initParseState $ wrap' "")
-    [ Tuple parseJsonStreamT $ Tuple (Left EOF) $ refillSource ""
-    , Tuple parseJsonStreamT $ Tuple (Left EOF) pure
+    [ Tuple parseJsonStreamT <<< Tuple (Right Nothing) $ refillSource ""
+    , Tuple parseJsonStreamT $ Tuple (Right Nothing) pure
     ]
 
   ------------------------------------------------------------------------------
   Tuple result _ ← parseJsonStreamT <<< Tuple initParseState $ wrap' "0 "
   assertEqual
     { actual: result
-    , expected: Right (ENumber 0.0)
+    , expected: Right $ Just (ENumber 0.0)
     }
   compareToArgonaut "0 "
 
   ------------------------------------------------------------------------------
   runTest (Tuple initParseState $ wrap' "0.0 ")
-    [ Right (ENumber (-0.0e+0)) ]
+    [ Right $ Just (ENumber (-0.0e+0)) ]
 
   ------------------------------------------------------------------------------
   runTest (Tuple initParseState $ wrap' "-0.0 ")
-    [ Right (ENumber 0.0e-3) ]
+    [ Right $ Just (ENumber 0.0e-3) ]
 
   ------------------------------------------------------------------------------
   runTest (Tuple initParseState $ wrap' "-0.0e+0 ")
-    [ Right (ENumber (-0.0)) ]
+    [ Right $ Just (ENumber (-0.0)) ]
 
   ------------------------------------------------------------------------------
   runTest (Tuple initParseState $ wrap' "0.0e-03 ")
-    [ Right (ENumber 0.0) ]
+    [ Right $ Just (ENumber 0.0) ]
 
   ------------------------------------------------------------------------------
   runTest (Tuple initParseState $ wrap' "0.125e+0022 ")
-    [ Right (ENumber 0.125e22) ]
+    [ Right $ Just (ENumber 0.125e22) ]
 
   ------------------------------------------------------------------------------
   runTest (Tuple initParseState $ wrap' "-0.125e-0022 ")
-    [ Right (ENumber (-0.125e-22)) ]
+    [ Right $ Just (ENumber (-0.125e-22)) ]
 
   ------------------------------------------------------------------------------
   runTest2 (Tuple initParseState $ wrap' "-0.125e-0022")
-    [ Tuple parseJsonStreamT $ Left EOF
-    , Tuple endJsonStreamParseT $ Right (ENumber (-0.125e-22))
+    [ Tuple parseJsonStreamT $ Right Nothing
+    , Tuple (\ state -> do
+        Tuple result state' <- endJsonStreamParseT state
+        pure $ Tuple (Just <$> result) state') <<< Right <<< Just $ ENumber (-0.125e-22)
     ]
   compareToArgonaut "-0.125e-0022"
 
   ------------------------------------------------------------------------------
   runTest (Tuple initParseState $ wrap' "[]")
-    [ Right EArrayStart
-    , Right EArrayEnd
+    [ Right $ Just EArrayStart
+    , Right $ Just EArrayEnd
     ]
   compareToArgonaut "[]"
 
   ------------------------------------------------------------------------------
   runTest (Tuple initParseState $ wrap' "[ null ]")
-    [ Right EArrayStart
-    , Right ENull
-    , Right EArrayEnd
+    [ Right $ Just EArrayStart
+    , Right $ Just ENull
+    , Right $ Just EArrayEnd
     ]
   compareToArgonaut "[ null ]"
 
   ------------------------------------------------------------------------------
   runTest (Tuple initParseState $ wrap' "[ true, null ]")
-    [ Right EArrayStart
-    , Right (EBool true)
-    , Right ENull
-    , Right EArrayEnd
+    [ Right $ Just EArrayStart
+    , Right <<< Just $ EBool true
+    , Right $ Just ENull
+    , Right $ Just EArrayEnd
     ]
   compareToArgonaut "[ true, null ]"
 
   ------------------------------------------------------------------------------
   runTest (Tuple initParseState $ wrap' "\r{ \t}")
-    [ Right EObjectStart
-    , Right EObjectEnd
+    [ Right $ Just EObjectStart
+    , Right $ Just EObjectEnd
     ]
   compareToArgonaut "\r{ \t}"
 
   ------------------------------------------------------------------------------
   runTest (Tuple initParseState $ wrap' "\r{\"test\": null \t}")
-    [ Right EObjectStart
-    , Right (EStringStart true)
-    , Right (EString true "test")
-    , Right (EStringEnd true)
-    , Right ENull
-    , Right EObjectEnd
+    [ Right $ Just EObjectStart
+    , Right <<< Just $ EStringStart true
+    , Right <<< Just $ EString true "test"
+    , Right <<< Just $ EStringEnd true
+    , Right $ Just ENull
+    , Right $ Just EObjectEnd
     ]
   compareToArgonaut "\r{\"test\": null \t}"
 
@@ -252,11 +254,11 @@ main = do
 
   ------------------------------------------------------------------------------
   runTest (Tuple initParseState $ wrap' "{\"test\":")
-    [ Right EObjectStart
-    , Right (EStringStart true)
-    , Right (EString true "test")
-    , Right (EStringEnd true)
-    , Left EOF
+    [ Right $ Just EObjectStart
+    , Right <<< Just $ EStringStart true
+    , Right <<< Just $ EString true "test"
+    , Right <<< Just $ EStringEnd true
+    , Right Nothing
     ]
 
 compareToArgonaut ∷ String → Effect Unit
@@ -272,7 +274,7 @@ compareToArgonaut str = do
       trace jsincParse \ _ →
       assert (either (const Nothing) Just (A.parseJson str) == either (const Nothing) Just (parseJson str))
 
-runTest ∷ ∀ s. Source s String Char Effect ⇒ Tuple ParseState s → Array (Either ParseException Event) → Effect Unit
+runTest ∷ ∀ s. Source s String Char Effect ⇒ Tuple ParseState s → Array (Either ParseException (Maybe Event)) → Effect Unit
 runTest state expected =
   case uncons expected of
     Just { head: x, tail: expected' } → do
@@ -284,7 +286,7 @@ runTest state expected =
       runTest state' expected'
     Nothing → trace state \ _ →pure unit
 
-runTest2 ∷ ∀ s. Source s String Char Effect ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException Event) (Tuple ParseState s))) (Either ParseException Event)) → Effect Unit
+runTest2 ∷ ∀ s. Source s String Char Effect ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException (Maybe Event)) (Tuple ParseState s))) (Either ParseException (Maybe Event))) → Effect Unit
 runTest2 state expected =
   case uncons expected of
     Just { head: Tuple f x, tail: expected' } → do
@@ -296,7 +298,7 @@ runTest2 state expected =
       runTest2 state' expected'
     Nothing → pure unit
 
-runTest3 ∷ ∀ s. Source s String Char Effect ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException Event) (Tuple ParseState s))) (Tuple (Either ParseException Event) (s → Effect s))) → Effect Unit
+runTest3 ∷ ∀ s. Source s String Char Effect ⇒ Tuple ParseState s → Array (Tuple (Tuple ParseState s → Effect (Tuple (Either ParseException (Maybe Event)) (Tuple ParseState s))) (Tuple (Either ParseException (Maybe Event)) (s → Effect s))) → Effect Unit
 runTest3 state expected =
   case uncons expected of
     Just { head: Tuple f (Tuple x g), tail: expected' } → do

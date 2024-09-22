@@ -7,13 +7,11 @@ module Control.Jsinc.Parser
   , ParseState
   , SourceState(..)
   , caseParseState
-  , emptyStartState
   , endJsonStreamParseT
   , initParseState
   , parseJsonStreamT
   , runParseT
   , startState
-  , stateString
   )
   where
 
@@ -21,7 +19,8 @@ import Prelude
 
 import Control.Monad.Except (ExceptT, catchError, runExceptT, throwError )
 import Control.Monad.Error.Class (class MonadThrow)
-import Control.Monad.Nope (NopeT, runNopeT)
+import Control.Monad.Maybe.Trans (MaybeT)
+import Control.Monad.Nope (liftMaybe, nope, runNopeT, yup)
 import Control.Monad.State (class MonadState, StateT, get, modify, runStateT)
 import Control.Monad.Trans.Class (lift)
 import Data.Array (snoc)
@@ -31,17 +30,15 @@ import Data.CodePoint.Unicode (decDigitToInt, hexDigitToInt, isControl, isSpace)
 import Data.Either (Either)
 import Data.Generic.Rep (class Generic)
 import Data.Int (toNumber)
-import Data.Maybe (fromMaybe, maybe)
+import Data.Maybe (Maybe, fromMaybe, maybe)
 import Data.Number (pow)
 import Data.Show.Generic (genericShow)
 import Data.Source
   ( class Source
-  , SourcePosition(SourcePosition)
-  , InPlaceSource(InPlaceSource)
-  , LineColumnPosition
   , peekSource
   , headSource
-  , initStringPosition)
+  , initialSource
+  )
 import Data.String.CodeUnits (charAt)
 import Data.String.CodePoints (codePointFromChar, fromCodePointArray)
 import Data.Tuple (Tuple(Tuple), fst, snd)
@@ -172,7 +169,6 @@ data ParseException
   | MissingPropName
   | UnclosedArray
   | UnclosedObject
-  | EOF
   | DataAfterJson
   | FlogTheDeveloper ParseState
 
@@ -229,30 +225,33 @@ stateTransitionFromEndValue parentState =
   PObject _ → next
   _ → throwError $ FlogTheDeveloper parentState
 
-numberEnd ∷ ∀ m a. Functor m ⇒ MonadState (Tuple ParseState a) m ⇒ MonadThrow ParseException m ⇒ Number → ParseState → m Event
+numberEnd ∷ ∀ m a. MonadState (Tuple ParseState a) m ⇒ MonadThrow ParseException m ⇒ Number → ParseState → m Event
 numberEnd num parentState = ENumber num <$ stateTransitionFromEndValue parentState
 
 applySign ∷ ∀ a. Ring a ⇒ Boolean → a → a
 applySign isPos = if isPos then identity else negate
 
 --------------------------------------------------------------------------------
-peek ∷ ∀ m a s d c. Monad m ⇒ Source s d c m ⇒ ExceptT ParseException (StateT (Tuple a s) m) c
-peek = getSourceState >>= lift <<< lift <<< peekSource >>= maybe (throwError EOF) pure
+startState ∷ ∀ f s d c. Functor f ⇒ Source s d c f ⇒ f (Tuple ParseState s)
+startState = Tuple initParseState <$> initialSource
 
-anyChar ∷ ∀ m a s. Monad m ⇒ Source s String Char m ⇒ ExceptT ParseException (StateT (Tuple a s) m) Char
-anyChar = getSourceState >>= lift <<< lift <<< headSource >>= maybe (throwError EOF) (\ (Tuple c s') → c <$ modify \ (Tuple parseState _) → Tuple parseState s')
+peek ∷ ∀ m a s d c. Monad m ⇒ Source s d c m ⇒ MaybeT (ExceptT ParseException (StateT (Tuple a s) m)) c
+peek = getSourceState >>= lift <<< lift <<< lift <<< peekSource >>= liftMaybe
 
-char ∷ ∀ m a s. Monad m ⇒ Source s String Char m ⇒ Char → ExceptT ParseException (StateT (Tuple a s) m) Char
+anyChar ∷ ∀ m a s. Monad m ⇒ Source s String Char m ⇒ MaybeT (ExceptT ParseException (StateT (Tuple a s) m)) Char
+anyChar = getSourceState >>= lift <<< lift <<< lift <<< headSource >>= maybe nope (\ (Tuple c s') → c <$ modify \ (Tuple parseState _) → Tuple parseState s')
+
+char ∷ ∀ m a s. Monad m ⇒ Source s String Char m ⇒ Char → MaybeT (ExceptT ParseException (StateT (Tuple a s) m)) Char
 char c = do
   c' ← peek
   if c == c'
   then anyChar
   else throwError $ CharExpected c
 
-runParseT ∷ ∀ m s e a. ExceptT e (StateT m s) a → m → s (Tuple (Either e a) m)
-runParseT = runStateT <<< runExceptT
+runParseT :: forall s m e a. MaybeT (ExceptT e (StateT s m)) a → s → m (Tuple (Either e (Maybe a)) s)
+runParseT = runStateT <<< runExceptT <<< runNopeT
 
-parseJsonStreamT ∷ ∀ m s. Monad m ⇒ Source s String Char m ⇒ Tuple ParseState s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
+parseJsonStreamT ∷ ∀ m s. Monad m ⇒ Source s String Char m ⇒ Tuple ParseState s → m (Tuple (Either ParseException (Maybe Event)) (Tuple ParseState s))
 parseJsonStreamT =
   runParseT
     let parse = do
@@ -363,41 +362,48 @@ parseJsonStreamT =
             PString isName charRead parentState →
               let recurse charRead' cpArr =
                     catchError
-                      ( let nextCharRead cRead cpArr' = anyChar *> putParseState (PString isName cRead parentState) *> recurse cRead cpArr'
-                            peekChar p = do
-                              c ← peek
-                              p c $ codePointFromChar c
-                        in
-                        case charRead' of
-                        CRClean → peekChar \ c cp →
-                          case c of
-                          '\\' → nextCharRead CREscape cpArr
-                          '"' → if A.length cpArr > 0
-                            then pure <<< EString isName $ fromCodePointArray cpArr
-                            else EStringEnd isName <$ anyChar <* putParseState ((if isName then PPostName else PPostValue) parentState)
-                          _ → if isControl cp
-                            then throwError UnescapedControl
-                            else snoc cpArr cp <$ anyChar >>= recurse charRead'
-                        CREscape → peekChar \ c _ →
-                          let esc c' = nextCharRead CRClean $ snoc cpArr (codePointFromChar c') in
-                          case c of
-                          '"' → esc '"'
-                          '\\' → esc '\\'
-                          '/' → esc '/'
-                          'b' → esc '\x0008'
-                          'f' → esc '\x000c'
-                          'n' → esc '\n'
-                          'r' → esc '\r'
-                          't' → esc '\t'
-                          'u' → nextCharRead (CRUnicode 0 0) cpArr
-                          _ → throwError InvalidEscape
-                        CRUnicode charCount value →
-                          if charCount == 4
-                          then putParseState (PString isName CRClean parentState) *> recurse CRClean (snoc cpArr <<< codePointFromChar <<< fromMaybe '\xfffd' $ fromCharCode value)
-                          else peekChar \ _ cp → maybe
-                            (throwError IncompleteUnicodeEscape)
-                            (\ digit → nextCharRead (CRUnicode (charCount + 1) $ value * 16 + digit) cpArr)
-                            $ hexDigitToInt cp
+                      ( yup
+                        ( let nextCharRead cRead cpArr' = anyChar *> putParseState (PString isName cRead parentState) *> recurse cRead cpArr'
+                              peekChar p = do
+                                c ← peek
+                                p c $ codePointFromChar c
+                          in
+                          case charRead' of
+                          CRClean → peekChar \ c cp →
+                            case c of
+                            '\\' → nextCharRead CREscape cpArr
+                            '"' → if A.length cpArr > 0
+                              then pure <<< EString isName $ fromCodePointArray cpArr
+                              else EStringEnd isName <$ anyChar <* putParseState ((if isName then PPostName else PPostValue) parentState)
+                            _ → if isControl cp
+                              then throwError UnescapedControl
+                              else snoc cpArr cp <$ anyChar >>= recurse charRead'
+                          CREscape → peekChar \ c _ →
+                            let esc c' = nextCharRead CRClean $ snoc cpArr (codePointFromChar c') in
+                            case c of
+                            '"' → esc '"'
+                            '\\' → esc '\\'
+                            '/' → esc '/'
+                            'b' → esc '\x0008'
+                            'f' → esc '\x000c'
+                            'n' → esc '\n'
+                            'r' → esc '\r'
+                            't' → esc '\t'
+                            'u' → nextCharRead (CRUnicode 0 0) cpArr
+                            _ → throwError InvalidEscape
+                          CRUnicode charCount value →
+                            if charCount == 4
+                            then putParseState (PString isName CRClean parentState) *> recurse CRClean (snoc cpArr <<< codePointFromChar <<< fromMaybe '\xfffd' $ fromCharCode value)
+                            else peekChar \ _ cp → maybe
+                              (throwError IncompleteUnicodeEscape)
+                              (\ digit → nextCharRead (CRUnicode (charCount + 1) $ value * 16 + digit) cpArr)
+                              $ hexDigitToInt cp
+                      )
+                      (
+                        if A.length cpArr > 0
+                        then pure <<< EString isName $ fromCodePointArray cpArr
+                        else nope
+                      )
                     )
                     (\ e →
                       if A.length cpArr > 0
@@ -542,12 +548,3 @@ endJsonStreamParseT = runStateT $ runExceptT do
       NRExpInd _ → throwError IncompleteExponent
       NRExpSign _ _ → throwError IncompleteExponent
       NRExp num isPos exp → numberEnd (num * pow 10.0 (applySign isPos exp)) parentState
-
-startState ∷ ∀ s. s → Tuple ParseState (SourcePosition (InPlaceSource s) LineColumnPosition)
-startState = Tuple initParseState <<< initStringPosition
-
-emptyStartState ∷ Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)
-emptyStartState = startState ""
-
-stateString ∷ Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition) → String → Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)
-stateString (Tuple parseState (SourcePosition _ lineColPos)) str = Tuple parseState $ SourcePosition (InPlaceSource str 0) lineColPos

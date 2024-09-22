@@ -5,10 +5,13 @@ module Data.Source
   , advance
   , class Position
   , class Source
+  , class StartPosition
   , headSource
+  , initialSource
   , initStringPosition
   , peekSource
   , refillSource
+  , startPosition
   )
   where
 
@@ -24,11 +27,13 @@ class Source s d c m | s → d, d → c where
   peekSource ∷ s → m (Maybe c)
   headSource ∷ s → m (Maybe (Tuple c s))
   refillSource ∷ d → s → m s
+  initialSource ∷ m s
 
 instance Monad m ⇒ Source String String Char m where
   peekSource str = pure $ charAt 0 str
   headSource str = peekSource str >>= pure <<< map (flip Tuple $ slice 1 (length str) str)
   refillSource str s = pure $ s <> str
+  initialSource = pure ""
 
 data InPlaceSource s = InPlaceSource s Int
 
@@ -43,6 +48,7 @@ instance Monad m ⇒ Source (InPlaceSource String) String Char m where
   peekSource (InPlaceSource str pos) = pure $ charAt pos str
   headSource s@(InPlaceSource str pos) = peekSource s >>= pure <<< map (flip Tuple <<< InPlaceSource str $ pos + 1)
   refillSource str' (InPlaceSource str pos) = pure $ InPlaceSource (slice pos (length str) str <> str') 0
+  initialSource = pure $ InPlaceSource "" 0
 
 data SourcePosition s p = SourcePosition s p
 
@@ -53,13 +59,17 @@ derive instance genericSourcePosition ∷ Generic (SourcePosition s p) _
 instance showSourcePosition ∷ (Show s, Show p) ⇒ Show (SourcePosition s p) where
   show = genericShow
 
-class Position p c m where
+class StartPosition m p where
+  startPosition ∷ m p
+
+class StartPosition m p ⇐ Position p c m where
   advance ∷ c → p → m p
 
 instance (Monad m, Position p c m, Source s d c m) ⇒ Source (SourcePosition s p) d c m where
   peekSource (SourcePosition s _) = peekSource s
   headSource (SourcePosition s p) = headSource s >>= maybe (pure Nothing) (\ (Tuple c s') → Just <<< Tuple c <<< SourcePosition s' <$> advance c p)
   refillSource d (SourcePosition s p) = refillSource d s >>= pure <<< flip SourcePosition p
+  initialSource = SourcePosition <$> initialSource <*> startPosition
 
 data LineColumnPosition = LineColumnPosition Int Boolean Int Int
 
@@ -72,6 +82,9 @@ instance showLineColumnPosition ∷ Show LineColumnPosition where
 
 initStringPosition ∷ ∀ s. s → SourcePosition (InPlaceSource s) LineColumnPosition
 initStringPosition str = SourcePosition (InPlaceSource str 0) $ LineColumnPosition 0 false 0 0
+
+instance Applicative m ⇒ StartPosition m LineColumnPosition where
+  startPosition = pure $ LineColumnPosition 0 false 0 0
 
 instance Applicative m ⇒ Position LineColumnPosition Char m where
   advance c (LineColumnPosition ndx followsCR line col) =

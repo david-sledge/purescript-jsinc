@@ -16,7 +16,6 @@ import Control.Jsinc.Parser
     , EObjectEnd
     , EJsonEnd
     )
-  , ParseException(EOF)
   , ParseState
   , initParseState
   , runParseT
@@ -400,13 +399,13 @@ instance (MonadThrow (DecodeExcption Unit) m, MonadEffect m) ⇒ DecodeJsonStrea
 whuh ∷ ∀ s c a p s'. s' → Tuple (Tuple a (SourcePosition s p)) c → Tuple (Tuple a (SourcePosition (InPlaceSource s') p)) c
 whuh jsonStr (Tuple (Tuple parseState (SourcePosition _ position)) acc) = Tuple (Tuple parseState (SourcePosition (InPlaceSource jsonStr 0) position)) acc
 
-decodeJsonResponseStream ∷ ∀ a c m.
-  DecodeJsonStream a c (ExceptT (DecodeExcption a) (StateT (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) c) m)) ⇒
-  MonadEffect m ⇒
-  MonadAff m ⇒
-  Response →
-  c →
-  m (Tuple (Tuple (Maybe a) (Maybe (DecodeExcption a))) (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) c))
+-- decodeJsonResponseStream ∷ ∀ a c m.
+--   DecodeJsonStream a c (ExceptT (DecodeExcption a) (StateT (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) c) m)) ⇒
+--   MonadEffect m ⇒
+--   MonadAff m ⇒
+--   Response →
+--   c →
+--   m (Tuple (Tuple (Maybe a) (Maybe (DecodeExcption a))) (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) c))
 decodeJsonResponseStream response startAcc = do
   reader ← liftEffect $ body response >>= getReader
   decoder ← liftEffect $ new utf8
@@ -425,23 +424,13 @@ decodeJsonResponseStream response startAcc = do
             jsonStr ← liftEffect $ decodeWithOptions chunk {stream: true} decoder
             Tuple result state' ← runParseT decodeJsonStreamT $ whuh jsonStr state
             either
-              (\ e →
-                case e of
-                ParseError EOF → eofF state'
-                _ → pure $ Tuple (Tuple mA $ Just e) state'
-              )
-              (\ a → aF a state')
+              (\ e → pure $ Tuple (Tuple mA $ Just e) state')
+              (maybe (eofF state') (\ a → aF a state'))
               result
           )
           mChunk
       checkRestOfStream a state = decodeChunk
-        (\ jsonStr → do
-            Tuple (Tuple mA e) state' ← decodeLastChunkHelperT a $ whuh jsonStr state
-            pure $ Tuple (Tuple mA
-                case e of
-                ParseError EOF → Nothing
-                _ → Just e
-              ) state'
+        (\ jsonStr → decodeLastChunkHelperT a $ whuh jsonStr state
         )
         (checkRestOfStream a)
         (Just a)
