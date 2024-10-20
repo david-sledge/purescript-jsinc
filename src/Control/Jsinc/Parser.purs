@@ -10,6 +10,7 @@ module Control.Jsinc.Parser
   , endJsonStreamParseT
   , initParseState
   , parseJsonStreamT
+  , runEndParseT
   , runParseT
   , startState
   )
@@ -191,9 +192,9 @@ data Event
   = ENumber Number
   | ENull
   | EBool Boolean
-  | EStringStart Boolean
-  | EString Boolean String
-  | EStringEnd Boolean
+  | EStringStart
+  | EString String
+  | EStringEnd
   | EArrayStart
   | EArrayEnd
   | EObjectStart
@@ -248,7 +249,7 @@ char c = do
   then anyChar
   else throwError $ CharExpected c
 
-runParseT :: forall s m e a. MaybeT (ExceptT e (StateT s m)) a → s → m (Tuple (Either e (Maybe a)) s)
+runParseT ∷ ∀ s m e a. MaybeT (ExceptT e (StateT s m)) a → s → m (Tuple (Either e (Maybe a)) s)
 runParseT = runStateT <<< runExceptT <<< runNopeT
 
 parseJsonStreamT ∷ ∀ m s. Monad m ⇒ Source s String Char m ⇒ Tuple ParseState s → m (Tuple (Either ParseException (Maybe Event)) (Tuple ParseState s))
@@ -286,7 +287,7 @@ parseJsonStreamT =
               literalStart lit = do
                 parseState ← getParseState
                 putParseState (PLiteral lit 0 parseState) *> literalParse lit 0 parseState
-              stringStart isName = EStringStart isName <$ anyChar <* modify \ (Tuple parseState srcState) → Tuple (PString isName CRClean parseState) srcState
+              stringStart isName = EStringStart <$ anyChar <* modify \ (Tuple parseState srcState) → Tuple (PString isName CRClean parseState) srcState
               decDigitCharToInt = decDigitToInt <<< codePointFromChar
           parseState ← getParseState
           case parseState of
@@ -373,8 +374,8 @@ parseJsonStreamT =
                             case c of
                             '\\' → nextCharRead CREscape cpArr
                             '"' → if A.length cpArr > 0
-                              then pure <<< EString isName $ fromCodePointArray cpArr
-                              else EStringEnd isName <$ anyChar <* putParseState ((if isName then PPostName else PPostValue) parentState)
+                              then pure <<< EString $ fromCodePointArray cpArr
+                              else EStringEnd <$ anyChar <* putParseState ((if isName then PPostName else PPostValue) parentState)
                             _ → if isControl cp
                               then throwError UnescapedControl
                               else snoc cpArr cp <$ anyChar >>= recurse charRead'
@@ -401,13 +402,13 @@ parseJsonStreamT =
                       )
                       (
                         if A.length cpArr > 0
-                        then pure <<< EString isName $ fromCodePointArray cpArr
+                        then pure <<< EString $ fromCodePointArray cpArr
                         else nope
                       )
                     )
                     (\ e →
                       if A.length cpArr > 0
-                      then pure <<< EString isName $ fromCodePointArray cpArr
+                      then pure <<< EString $ fromCodePointArray cpArr
                       else throwError e
                     )
               in
@@ -516,8 +517,11 @@ parseJsonStreamT =
       in
       parse
 
-endJsonStreamParseT ∷ ∀ m s. Monad m ⇒ Tuple ParseState s → m (Tuple (Either ParseException Event) (Tuple ParseState s))
-endJsonStreamParseT = runStateT $ runExceptT do
+runEndParseT ∷ ∀ s m e a. ExceptT e (StateT s m) a → s → m (Tuple (Either e a) s)
+runEndParseT = runStateT <<< runExceptT
+
+endJsonStreamParseT ∷ ∀ m s. Monad m ⇒ Tuple ParseState s → m (Tuple (Either ParseException (Maybe Event)) (Tuple ParseState s))
+endJsonStreamParseT = runParseT do
   parseState ← getParseState
   case parseState of
     PRoot → throwError MissingValue
@@ -535,7 +539,7 @@ endJsonStreamParseT = runStateT $ runExceptT do
     PPostNameTerm _ → throwError MissingValue
     PPostValue parentState →
       case parentState of
-      PRoot → pure EJsonEnd
+      PRoot → nope
       PArray _ → throwError UnclosedArray
       PObject _ → throwError UnclosedObject
       _ → throwError $ FlogTheDeveloper parentState

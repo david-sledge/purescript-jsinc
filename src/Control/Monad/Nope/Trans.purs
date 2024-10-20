@@ -32,4 +32,4 @@ mapNopeT f (MaybeT m) = nopeT (f m)
 
 -- | Construct a computation in the `NopeT` transformer from an `Either` value.
 nopeEither ∷ ∀ e m a. Monad m ⇒ Either e a → NopeT m a
-nopeEither = either (const <<< nopeT $ pure Nothing) pure
+nopeEither = either (\ _ → nopeT $ pure Nothing) pure

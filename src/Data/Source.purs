@@ -20,7 +20,7 @@ import Prelude
 import Data.Generic.Rep (class Generic)
 import Data.Maybe (Maybe(Just, Nothing), maybe)
 import Data.Show.Generic (genericShow)
-import Data.String.CodeUnits (charAt, length, slice)
+import Data.String.CodeUnits (charAt, drop)
 import Data.Tuple (Tuple(Tuple))
 
 class Source s d c m | s → d, d → c where
@@ -31,7 +31,7 @@ class Source s d c m | s → d, d → c where
 
 instance Monad m ⇒ Source String String Char m where
   peekSource str = pure $ charAt 0 str
-  headSource str = peekSource str >>= pure <<< map (flip Tuple $ slice 1 (length str) str)
+  headSource str = peekSource str >>= pure <<< map (flip Tuple $ drop 1 str)
   refillSource str s = pure $ s <> str
   initialSource = pure ""
 
@@ -47,7 +47,7 @@ instance showInPlaceSource ∷ Show s ⇒ Show (InPlaceSource s) where
 instance Monad m ⇒ Source (InPlaceSource String) String Char m where
   peekSource (InPlaceSource str pos) = pure $ charAt pos str
   headSource s@(InPlaceSource str pos) = peekSource s >>= pure <<< map (flip Tuple <<< InPlaceSource str $ pos + 1)
-  refillSource str' (InPlaceSource str pos) = pure $ InPlaceSource (slice pos (length str) str <> str') 0
+  refillSource str' (InPlaceSource str pos) = pure $ InPlaceSource (drop pos str <> str') 0
   initialSource = pure $ InPlaceSource "" 0
 
 data SourcePosition s p = SourcePosition s p

@@ -1,6 +1,6 @@
 module Data.Jsinc.Argonaut
   ( JAccumulator
-  , parseJson
+  , parseJson2
   ) where
 
 import Prelude
@@ -8,8 +8,9 @@ import Prelude
 import Control.Jsinc.Decoder
   ( class Accumulator
   , class DecodeJsonStream
-  , DecodeExcption(ImplementationError, ShouldNeverHappen)
-  , decodeT
+  , class EndJsonDecode
+  , DecodeException(ImplementationError)
+  , decodeContT
   )
 import Control.Jsinc.Parser
   ( Event
@@ -23,12 +24,13 @@ import Control.Jsinc.Parser
     , EArrayEnd
     , EObjectStart
     , EObjectEnd
-    , EJsonEnd
     )
-    , ParseState
+  , ParseState
   )
 import Control.Monad.Error.Class (class MonadThrow)
-import Control.Monad.Except (throwError)
+import Control.Monad.Except (ExceptT, throwError)
+import Control.Monad.Nope (MaybeT)
+import Control.Monad.State (StateT)
 import Data.Argonaut
   ( Json
   , fromArray
@@ -39,10 +41,10 @@ import Data.Argonaut
   , jsonNull
   )
 import Data.Array (snoc)
-import Data.Either (Either(Left, Right))
+import Data.Either (Either(Left, Right), either)
 import Data.Identity (Identity(Identity))
 import Data.Maybe (Maybe(Just, Nothing), maybe)
-import Data.Source (InPlaceSource, LineColumnPosition, SourcePosition, initStringPosition)
+import Data.Source (InPlaceSource, LineColumnPosition, SourcePosition)
 import Data.Tuple (Tuple(Tuple))
 import Foreign.Object (fromFoldable)
 
@@ -55,13 +57,32 @@ data JAccumulator
 instance Applicative m ⇒ Accumulator m JAccumulator where
   initAcc = pure RootAcc
 
-instance MonadThrow (DecodeExcption Json) m ⇒ DecodeJsonStream Json JAccumulator m where
+instance MonadThrow DecodeException m ⇒ EndJsonDecode Json JAccumulator m where
+  endJsonDecodeT acc event =
+    let f = pure <<< Left
+        err = throwError ImplementationError
+    in
+    case event of
+    ENumber num →
+      let jVal = fromNumber num in
+      case acc of
+      RootAcc → pure $ Right jVal
+      ArrayAcc acc' values → f <<< ArrayAcc acc' $ snoc values jVal
+      ObjectAcc acc' props mName →
+        maybe
+          err
+          (\ name → f $ ObjectAcc acc' (snoc props $ Tuple name jVal) Nothing)
+          mName
+      _ → err
+    _ → err
+
+instance MonadThrow DecodeException m ⇒ DecodeJsonStream Json JAccumulator m where
   decodeJsonT acc event =
-    let f acc' = pure $ Tuple acc' Nothing
+    let f = pure <<< Left
         err = throwError ImplementationError
         processValue mStr acc' jVal =
           case acc' of
-          RootAcc → pure <<< Tuple acc' $ Just jVal
+          RootAcc → pure $ Right jVal
           ArrayAcc acc'' values → f <<< ArrayAcc acc'' $ snoc values jVal
           ObjectAcc acc'' props mName →
             maybe
@@ -74,15 +95,15 @@ instance MonadThrow (DecodeExcption Json) m ⇒ DecodeJsonStream Json JAccumulat
     ENumber num → processValue Nothing acc $ fromNumber num
     ENull → processValue Nothing acc jsonNull
     EBool bool → processValue Nothing acc $ fromBoolean bool
-    EStringStart _ →
+    EStringStart →
       case acc of
       StringAcc _ _ → err
       _ → f $ StringAcc acc ""
-    EString _ str →
+    EString str →
       case acc of
       StringAcc acc' str' → f <<< StringAcc acc' $ str' <> str
       _ → err
-    EStringEnd _ →
+    EStringEnd →
       case acc of
       StringAcc acc' str → processValue (Just str) acc' $ fromString str
       _ → err
@@ -99,32 +120,14 @@ instance MonadThrow (DecodeExcption Json) m ⇒ DecodeJsonStream Json JAccumulat
         Nothing → processValue Nothing acc' <<< fromObject $ fromFoldable props
         Just _ → err
       _ → err
-    EJsonEnd → err
-
-  endJsonDecodeT acc event =
-    let f acc' = pure $ Tuple acc' Nothing
-        g = pure <<< Tuple acc <<< pure
-        err = throwError ImplementationError
-    in
-    case event of
-    ENumber num →
-      let jVal = fromNumber num in
-      case acc of
-      RootAcc → g $ Just jVal
-      ArrayAcc acc' values → f <<< ArrayAcc acc' $ snoc values jVal
-      ObjectAcc acc' props mName →
-        maybe
-          err
-          (\ name → f $ ObjectAcc acc' (snoc props $ Tuple name jVal) Nothing)
-          mName
-      _ → err
-    EJsonEnd →
-      case acc of
-      RootAcc → g Nothing
-      _ → err
     _ → err
 
-parseJson ∷ String → Either (DecodeExcption Json) Json
-parseJson jsonStr =
-  case (decodeT $ initStringPosition jsonStr) ∷ Identity (Tuple (Tuple (Maybe Json) (Maybe (DecodeExcption Json))) (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) JAccumulator)) of
-  Identity (Tuple (Tuple mA mE) _) → maybe (maybe (Left $ ShouldNeverHappen Nothing) (Right <<< identity) mA) Left mE
+parseJson2 ∷ String → Either DecodeException Json
+parseJson2 jsonStr = case (decodeContT ∷
+    String →
+    (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) (Either JAccumulator Json) → DecodeException → Identity (Either DecodeException Json)) →
+    (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) (Either JAccumulator Json) → (Maybe String → Identity (Either DecodeException Json)) → Identity (Either DecodeException Json)) →
+    (Json → Identity (Either DecodeException Json)) →
+    Identity (Either DecodeException Json))
+    jsonStr (\ _ e → pure $ Left e) (\ _ f → f Nothing) (pure <<< Right) of
+  Identity r → r
