@@ -14,60 +14,37 @@ import Control.Jsinc.Parser
     , EArrayEnd
     , EObjectStart
     , EObjectEnd
-    , EJsonEnd
     )
-  , ParseState
-  , initParseState
-  , runParseT
   )
 import Control.Jsinc.Decoder
-  ( class Accumulator
-  , class DecodeJsonStream
+  ( class DecodeJsonStream
   , class EndJsonDecode
-  , DecodeException(ImplementationError, ParseError)
-  , decodeContT
+  , DecodeException(DecodeError)
   )
 import Control.Monad.Error.Class (class MonadThrow)
-import Control.Monad.Except (ExceptT, throwError)
-import Control.Monad.State.Trans (class MonadState, StateT, get)
-import Control.Monad.Reader (class MonadReader, ask, runReaderT)
+import Control.Monad.Except (throwError)
 import Control.Promise as Promise
-import Data.ArrayBuffer.Typed as AB
-import Data.ArrayBuffer.Types (ArrayView, Uint8)
-import Data.Either (Either(Left, Right), either)
+import Data.Either (Either(Left, Right))
 import Data.Generic.Rep (class Generic)
 import Data.HTTP.Method (Method(GET))
-import Data.HashMap (HashMap, empty, insert, lookup)
 import Data.Int (fromNumber)
-import Data.Maybe (Maybe(Just, Nothing), maybe)
-import Data.Show.Generic (genericShow)
-import Data.Source
-  ( InPlaceSource(InPlaceSource)
-  , LineColumnPosition
-  , SourcePosition(SourcePosition)
-  , initStringPosition
-  )
+import Data.Maybe (maybe)
 import Data.Tuple (Tuple(Tuple))
 import Effect (Effect)
 import Effect.Aff (launchAff_)
-import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Class.Console (log)
 import Fetch.Core as Fetch
 import Fetch.Core.Duplex (Duplex(Half))
 import Fetch.Core.Request as Request
-import Fetch.Core.Response (Response, status, body)
+import Fetch.Core.Response (status)
 import Unsafe.Coerce (unsafeCoerce)
 import Web.Chain.DOM (el, eln, nd, ndM, txn, (+<))
 import Web.Chain.Event (onReady_)
 import Web.Chain.HTML (docBody, table, td, th, tr)
 import Web.DOM (Element)
 import Web.DOM.Class.NodeOp (appendChild)
-import Web.Encoding.TextDecoder (new, decodeWithOptions)
-import Web.Encoding.UtfLabel (utf8)
-import Web.HTML.HTMLTableCellElement (HTMLTableCellElement)
-import Web.Streams.ReadableStream (getReader)
-import Web.Streams.Reader (read)
+import Web.Fetch.Response.Jsinc (decodeJsonResponseStream)
 
 data PathState
   = PathRoot
@@ -85,61 +62,56 @@ instance showPathState ∷ Show PathState where
   show (PathName pathState b str) = "PathName (" <> show pathState <> ") " <> show b <> " " <> show str
   show (PathArray pathState ndx) = "PathArray (" <> show pathState <> ") " <> show ndx
 
-instance Applicative m ⇒ Accumulator m PathState where
-  initAcc = pure PathRoot
+err ∷ forall m t c a. MonadThrow (DecodeException c a) m ⇒ String → m t
+err = throwError <<< DecodeError
 
-err2 = throwError ImplementationError
-
-showPath2 ∷ ∀ m. Applicative m ⇒ MonadThrow DecodeException m ⇒ PathState → String → m String
-showPath2 pathState str =
+showPath ∷ ∀ m. Applicative m ⇒ MonadThrow (DecodeException PathState Unit) m ⇒ PathState → String → m String
+showPath pathState str =
   case pathState of
   PathRoot → pure str
   PathName pathState' true name →
     case pathState' of
-    PathObject pathState'' → showPath2 pathState'' $ "/" <> show name <> str
-    _ → err2
-  PathArray pathState' ndx → showPath2 pathState' $ "/" <> show ndx <> str
-  _ → err2
+    PathObject pathState'' → showPath pathState'' $ "/" <> show name <> str
+    _ → err $ "Programmatic error: parent of PathName should be PathObject: " <> show pathState'
+  PathArray pathState' ndx → showPath pathState' $ "/" <> show ndx <> str
+  _ → err $ "Programmatic error: pathState should be PathRoot, PathName, or PathArray: " <> show pathState
 
-instance (MonadThrow DecodeException m, MonadEffect m) ⇒ EndJsonDecode Unit PathState m where
-  endJsonDecodeT pathState event =
-    case event of
-    ENumber num → do
-      showPath2 pathState (": " <> (maybe (show num) show $ fromNumber num)) >>= log
-      case pathState of
-        PathRoot → pure $ Right unit
-        PathName pathState' true name →
-          case pathState' of
-          PathObject _ → pure $ Left pathState'
-          _ → err2
-        PathArray _ _ → pure $ Left pathState
-        _ → err2
-    _ → err2
+instance (MonadThrow (DecodeException PathState Unit) m, MonadEffect m) ⇒ EndJsonDecode PathState Unit m where
+  endJsonDecodeT pathState num = do
+    showPath pathState (": " <> (maybe (show num) show $ fromNumber num)) >>= log
+    case pathState of
+      PathRoot → pure $ Right unit
+      PathName pathState' true _ →
+        case pathState' of
+        PathObject _ → pure $ Left pathState'
+        _ → err $ "Programmatic error: parent of PathName should be PathObject: " <> show pathState'
+      PathArray _ _ → pure $ Left pathState
+      _ → err $ "Programmatic error: pathState should be PathRoot, PathName, or PathArray: " <> show pathState
 
-instance (MonadThrow DecodeException m, MonadEffect m) ⇒ DecodeJsonStream Unit PathState m where
+instance (MonadThrow (DecodeException PathState Unit) m, MonadEffect m) ⇒ DecodeJsonStream PathState Unit m where
   decodeJsonT pathState event =
-    let logWithPath' str = showPath2 pathState (": " <> str) >>= log
+    let logWithPath' str = showPath pathState (": " <> str) >>= log
         logWithPath str = do
           logWithPath' str
           case pathState of
             PathRoot → pure $ Right unit
-            PathName pathState' true name →
+            PathName pathState' true _ →
               case pathState' of
               PathObject _ → pure $ Left pathState'
-              _ → err2
+              _ → err $ "Programmatic error: parent of PathName should be PathObject: " <> show pathState'
             PathArray pathState' ndx → pure $ Left (PathArray pathState' $ ndx + 1)
-            _ → err2
+            _ → err $ "Programmatic error: pathState should be PathRoot, PathName, or PathArray: " <> show pathState
         upLevel =
           let passName pathState' =
                 case pathState' of
                 PathName pathState'' _ _ → pure $ Left pathState''
                 PathArray pathState'' ndx → pure $ Left (PathArray pathState'' $ ndx + 1)
-                _ → err2
+                _ → err $ "Programmatic error: pathState should be PathName, or PathArray: " <> show pathState'
           in
           case pathState of
           PathArray pathState' _ → passName pathState'
           PathObject pathState' → passName pathState'
-          _ → err2
+          _ → err $ "Programmatic error: pathState should be PathObject, or PathArray: " <> show pathState
     in
     case event of
     ENumber num → logWithPath <<< maybe (show num) show $ fromNumber num
@@ -160,51 +132,21 @@ instance (MonadThrow DecodeException m, MonadEffect m) ⇒ DecodeJsonStream Unit
           then
             case pathState' of
             PathObject _ → pure $ Left pathState'
-            _ → err2
+            _ → err $ "Programmatic error: pathState should be PathObject: " <> show pathState'
           else pure $ Left (PathName pathState' true name)
       PathRoot → pure $ Right unit
       PathArray pathState' ndx → pure $ Left (PathArray pathState' $ ndx + 1)
-      _ → err2
+      _ → err $ "Programmatic error: pathState should be PathName, PathRoot, or PathArray: " <> show pathState
     EArrayStart → pure $ Left (PathArray pathState 0)
     EArrayEnd →
       case pathState of
-      PathArray pathState' _ → upLevel
-      _ → err2
+      PathArray _ _ → upLevel
+      _ → err $ "Programmatic error: pathState should be PathArray: " <> show pathState
     EObjectStart → pure $ Left (PathObject pathState)
     EObjectEnd →
       case pathState of
-      PathObject pathState → upLevel
-      _ → err2
-    _ → err2
-
-decodeJsonResponseStream ∷ ∀ m.
-  MonadAff m ⇒
-  Response →
-  m Unit
-decodeJsonResponseStream response = do
-  reader ← liftEffect $ body response >>= getReader
-  decoder ← liftEffect $ new utf8
-  liftAff (Promise.toAffE (unsafeCoerce $ read reader)) >>=
-    maybe (log "No data in response") (
-        \ chunk → do
-          jsonStr ← liftEffect $ decodeWithOptions chunk {stream: true} decoder
-          log jsonStr
-          (decodeContT ∷
-            String →
-            (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) (Either PathState Unit) → DecodeException → m Unit) →
-            (Tuple (Tuple ParseState (SourcePosition (InPlaceSource String) LineColumnPosition)) (Either PathState Unit) → (Maybe String → m Unit) → m Unit) →
-            (Unit → m Unit) →
-            m Unit) jsonStr (\ st e → do
-              log $ show e
-              log $ show st
-            )
-            (\ _ f → do
-              liftAff (Promise.toAffE (unsafeCoerce $ read reader)) >>= maybe
-                (f Nothing)
-                (\ chunk' → liftEffect (decodeWithOptions chunk' {stream: true} decoder) >>= f <<< Just)
-            )
-            (\ result → pure unit)
-      )
+      PathObject _ → upLevel
+      _ → err $ "Programmatic error: pathState should be PathObject: " <> show pathState
 
 main ∷ Effect Unit
 main = do
@@ -245,5 +187,5 @@ main = do
         , duplex: Half
         }
       response ← Promise.toAffE $ unsafeCoerce $ Fetch.fetch request
-      decodeJsonResponseStream response
+      decodeJsonResponseStream PathRoot response
       log $ "response.status: " <> show (status response)

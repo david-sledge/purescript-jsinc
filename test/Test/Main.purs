@@ -21,7 +21,7 @@ import Data.Argonaut.Decode.Parser as A
 import Data.Array (uncons)
 import Data.Char (fromCharCode)
 import Data.Either (Either(..), either)
-import Data.Jsinc.Argonaut (parseJson2)
+import Data.Jsinc.Argonaut (parseJson)
 import Data.Maybe (Maybe(Just, Nothing), fromMaybe, maybe)
 import Data.Source (class Source, InPlaceSource(InPlaceSource), LineColumnPosition(LineColumnPosition), SourcePosition(SourcePosition), advance, peekSource, headSource, refillSource)
 import Data.Tuple (Tuple(..))
@@ -195,7 +195,7 @@ main = do
     [ Tuple parseJsonStreamT $ Right Nothing
     , Tuple (\ state → do
         Tuple result state' ← endJsonStreamParseT state
-        pure $ Tuple result state') <<< Right <<< Just $ ENumber (-0.125e-22)
+        pure $ Tuple ((map ENumber) <$> result) state') <<< Right <<< Just $ ENumber (-0.125e-22)
     ]
   compareToArgonaut "-0.125e-0022"
 
@@ -267,7 +267,7 @@ main = do
 compareToArgonaut ∷ String → Effect Unit
 compareToArgonaut str = do
   let argonautParse = A.parseJson str
-      jsincParse = parseJson2 str
+      jsincParse = parseJson str
       result = either (\ _ → Nothing) Just argonautParse == either (\ _ → Nothing) Just jsincParse
   -- if result
   -- then
