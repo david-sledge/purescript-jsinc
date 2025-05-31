@@ -7,9 +7,13 @@ workspace:
     registry: 56.4.0
 package:
   dependencies:
+  - aff-promise
   - argonaut
   - debug
+  - fetch-core
   - unicode
+  - web-encoding
+  - web-streams
   name: jsinc-parser
   test:
     main: Test.Main

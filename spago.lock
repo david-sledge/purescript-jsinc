@@ -9,6 +9,8 @@ workspace:
         - console
         - fetch-core
         - http-methods
+        - js-promise-aff
+        - js-timers
         - jsinc-parser
         - web-chain
         - web-encoding
@@ -57,6 +59,8 @@ workspace:
         - invariant
         - js-date
         - js-promise
+        - js-promise-aff
+        - js-timers
         - jsinc-parser
         - lazy
         - lists
@@ -106,19 +110,25 @@ workspace:
     jsinc-parser:
       path: ./
       dependencies:
+        - aff-promise
         - argonaut
         - debug
+        - fetch-core
         - unicode
+        - web-encoding
+        - web-streams
       test_dependencies:
         - assert
         - spec
       build_plan:
         - aff
+        - aff-promise
         - ansi
         - argonaut
         - argonaut-codecs
         - argonaut-core
         - argonaut-traversals
+        - arraybuffer-types
         - arrays
         - assert
         - avar
@@ -136,23 +146,29 @@ workspace:
         - enums
         - exceptions
         - exists
+        - fetch-core
         - foldable-traversable
+        - foreign
         - foreign-object
         - fork
         - free
         - functions
         - functors
         - gen
+        - http-methods
         - identity
         - integers
         - invariant
+        - js-promise
         - lazy
         - lists
         - maybe
+        - media-types
         - mmorph
         - newtype
         - nonempty
         - now
+        - nullable
         - numbers
         - ordered-collections
         - orders
@@ -176,6 +192,11 @@ workspace:
         - unfoldable
         - unicode
         - unsafe-coerce
+        - web-dom
+        - web-encoding
+        - web-events
+        - web-file
+        - web-streams
   package_set:
     address:
       registry: 56.4.0
@@ -1166,6 +1187,20 @@ packages:
       - functions
       - maybe
       - prelude
+  js-promise-aff:
+    type: registry
+    version: 1.0.0
+    integrity: sha256-s9kml9Ei74hKlMMg41yyZp4GkbmYUwaH+gBWWrdhwec=
+    dependencies:
+      - aff
+      - foreign
+      - js-promise
+  js-timers:
+    type: registry
+    version: 6.1.0
+    integrity: sha256-znHWLSSOYw15P5DTcsAdal2lf7nGA2yayLdOZ2t5r7o=
+    dependencies:
+      - effect
   lazy:
     type: registry
     version: 6.0.0

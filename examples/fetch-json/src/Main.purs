@@ -23,27 +23,34 @@ import Control.Jsinc.Decoder
   )
 import Control.Monad.Error.Class (class MonadThrow)
 import Control.Monad.Except (throwError)
+import Control.Monad.Reader (class MonadReader, class MonadAsk, ask, runReaderT)
 import Control.Promise as Promise
 import Data.Either (Either(Left, Right))
 import Data.Generic.Rep (class Generic)
 import Data.HTTP.Method (Method(GET))
 import Data.Int (fromNumber)
 import Data.Maybe (maybe)
+import Data.Time.Duration (Milliseconds(Milliseconds))
 import Data.Tuple (Tuple(Tuple))
 import Effect (Effect)
-import Effect.Aff (launchAff_)
+import Effect.Aff (delay, launchAff_)
+import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Class.Console (log)
+import Effect.Timer (setTimeout)
 import Fetch.Core as Fetch
 import Fetch.Core.Duplex (Duplex(Half))
 import Fetch.Core.Request as Request
 import Fetch.Core.Response (status)
+import Promise (new)
+import Promise.Aff (toAffE)
 import Unsafe.Coerce (unsafeCoerce)
-import Web.Chain.DOM (el, eln, nd, ndM, txn, (+<))
+import Web.Chain.DOM (el, eln, nd, ndM, remove, txn, (+<))
 import Web.Chain.Event (onReady_)
 import Web.Chain.HTML (docBody, table, td, th, tr)
 import Web.DOM (Element)
-import Web.DOM.Class.NodeOp (appendChild)
+import Web.DOM.Class.NodeOp (class NodeOp, appendChild, childNodes, firstChild)
+import Web.DOM.NodeList (length)
 import Web.Fetch.Response.Jsinc (decodeJsonResponseStream)
 
 data PathState
@@ -76,9 +83,21 @@ showPath pathState str =
   PathArray pathState' ndx → showPath pathState' $ "/" <> show ndx <> str
   _ → err $ "Programmatic error: pathState should be PathRoot, PathName, or PathArray: " <> show pathState
 
-instance (MonadThrow (DecodeException PathState Unit) m, MonadEffect m) ⇒ EndJsonDecode PathState Unit m where
+logToUi ∷ ∀ n m. MonadAff m ⇒ MonadAsk n m ⇒ NodeOp n ⇒ String → m Unit
+logToUi str = do
+  trow <- tr [] [ td [Tuple "style" "white-space: pre-wrap"] [ txn str ] # ndM ] # ndM
+  tableBod <- ask
+  appendChild trow tableBod
+  len <- childNodes tableBod >>= liftEffect <<< length
+  pure unit
+  when (len > 1000) do
+    mChild <- firstChild tableBod
+    maybe (pure unit) (void <<< remove) mChild
+  liftAff <<< delay $ Milliseconds 1.0
+
+instance (MonadThrow (DecodeException PathState Unit) m, MonadAff m, MonadReader Element m) ⇒ EndJsonDecode PathState Unit m where
   endJsonDecodeT pathState num = do
-    showPath pathState (": " <> (maybe (show num) show $ fromNumber num)) >>= log
+    showPath pathState (": " <> (maybe (show num) show $ fromNumber num)) >>= logToUi
     case pathState of
       PathRoot → pure $ Right unit
       PathName pathState' true _ →
@@ -88,9 +107,9 @@ instance (MonadThrow (DecodeException PathState Unit) m, MonadEffect m) ⇒ EndJ
       PathArray _ _ → pure $ Left pathState
       _ → err $ "Programmatic error: pathState should be PathRoot, PathName, or PathArray: " <> show pathState
 
-instance (MonadThrow (DecodeException PathState Unit) m, MonadEffect m) ⇒ DecodeJsonStream PathState Unit m where
+instance (MonadThrow (DecodeException PathState Unit) m, MonadAff m, MonadReader Element m) ⇒ DecodeJsonStream PathState Unit m where
   decodeJsonT pathState event =
-    let logWithPath' str = showPath pathState (": " <> str) >>= log
+    let logWithPath' str = showPath pathState (": " <> str) >>= logToUi
         logWithPath str = do
           logWithPath' str
           case pathState of
@@ -124,7 +143,7 @@ instance (MonadThrow (DecodeException PathState Unit) m, MonadEffect m) ⇒ Deco
     EString str →
       case pathState of
       PathName pathState' false str' → pure $ Left (PathName pathState' false $ str' <> str)
-      _ → log (show str) *> pure (Left pathState)
+      _ → logToUi ("\t" <> show str) *> pure (Left pathState)
     EStringEnd →
       case pathState of
       PathName pathState' isComplete name → do
@@ -152,40 +171,12 @@ main ∷ Effect Unit
 main = do
   onReady_ \ _ → do
     tableBody ← el "tbody" [] []
-    bind docBody <<< appendChild =<< table []
-      [ eln "thead" []
-        [ tr []
-          [ th [ Tuple "rowspan" "2" ] [ txn "ID" ] # ndM
-          , th [ Tuple "rowspan" "2" ] [ txn "Type" ] # ndM
-          , th [ Tuple "colspan" "5" ] [ txn "Actor" ] # ndM
-          , th [ Tuple "colspan" "3" ] [ txn "Repo" ] # ndM
-          , th [ Tuple "colspan" "5" ] [ txn "Payload" ] # ndM
-          , th [ Tuple "rowspan" "2" ] [ txn "Is Public?" ] # ndM
-          , th [ Tuple "rowspan" "2" ] [ txn "Date Created" ] # ndM
-          ] # ndM
-        , tr []
-          [ th [] [ txn "ID" ] # ndM
-          , th [] [ txn "Login" ] # ndM
-          , th [] [ txn "Gravatar ID" ] # ndM
-          , th [] [ txn "URL" ] # ndM
-          , th [] [ txn "Avatar URL" ] # ndM
-          , th [] [ txn "ID" ] # ndM
-          , th [] [ txn "Name" ] # ndM
-          , th [] [ txn "URL" ] # ndM
-          , th [] [ txn "Ref" ] # ndM
-          , th [] [ txn "Ref Type" ] # ndM
-          , th [] [ txn "Master Branch" ] # ndM
-          , th [] [ txn "Description" ] # ndM
-          , th [] [ txn "Pusher Type" ] # ndM
-          ] # ndM
-        ]
-      , nd tableBody
-      ]
+    bind docBody <<< appendChild =<< table [] [ nd tableBody ]
     launchAff_ do
       request ← liftEffect $ Request.new "test.json"
         { method: GET
         , duplex: Half
         }
-      response ← Promise.toAffE $ unsafeCoerce $ Fetch.fetch request
-      decodeJsonResponseStream PathRoot response
+      response ← toAffE $ Fetch.fetch request
+      runReaderT (decodeJsonResponseStream PathRoot response) tableBody
       log $ "response.status: " <> show (status response)
