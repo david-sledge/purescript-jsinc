@@ -1,2 +1,2 @@
-# purescript-jsinc-parser
+# purescript-jsinc
 PureScript incremental JSON parser

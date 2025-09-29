@@ -12,7 +12,7 @@
     "rimraf-version": "echo -n \"rimraf version: \" && rimraf --version",
     "spago-version": "echo -n \"spago version: \" && spago --version",
     "versions": "npm run -s node-version && npm run -s npm-version && npm run -s esbuild-version && npm run -s purs-version && npm run -s psa-version && npm run -s purs-tidy-version && npm run -s rimraf-version && npm run -s spago-version",
-    "build": "spago build -p jsinc-parser",
+    "build": "spago build -p jsinc",
     "format": "purs-tidy format-in-place src test",
     "check-formatting": "purs-tidy check src test",
     "test": "spago test",

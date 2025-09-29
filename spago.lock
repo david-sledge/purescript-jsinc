@@ -11,7 +11,7 @@ workspace:
         - http-methods
         - js-promise-aff
         - js-timers
-        - jsinc-parser
+        - jsinc
         - web-chain
         - web-encoding
         - web-streams
@@ -61,7 +61,7 @@ workspace:
         - js-promise
         - js-promise-aff
         - js-timers
-        - jsinc-parser
+        - jsinc
         - lazy
         - lists
         - maybe
@@ -107,7 +107,7 @@ workspace:
         - web-storage
         - web-streams
         - web-uievents
-    jsinc-parser:
+    jsinc:
       path: ./
       dependencies:
         - aff-promise

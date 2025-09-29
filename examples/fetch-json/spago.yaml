@@ -9,7 +9,7 @@ package:
   - http-methods
   - js-promise-aff
   - js-timers
-  - jsinc-parser
+  - jsinc
   - web-chain
   - web-encoding
   - web-streams

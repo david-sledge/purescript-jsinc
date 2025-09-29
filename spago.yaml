@@ -14,7 +14,7 @@ package:
   - unicode
   - web-encoding
   - web-streams
-  name: jsinc-parser
+  name: jsinc
   test:
     main: Test.Main
     censorTestWarnings:
