@@ -1,4 +1,8 @@
 workspace:
+  extraPackages:
+    web-chain:
+      git: https://github.com/david-sledge/purescript-web-chain.git
+      ref: 074d931a0abebc05ce2aa70ffc9197224d94be89
   packageSet:
     registry: 75.2.1
 package:
@@ -38,6 +42,8 @@ package:
   publish:
     version: 0.5.0
     license: MIT
+    exclude:
+      - "examples/**"
     location:
       githubOwner: david-sledge
       githubRepo: purescript-jsinc

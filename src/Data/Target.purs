@@ -5,4 +5,4 @@ module Data.Target
   where
 
 class Target t c m where
-  pushTarget ∷ c t → m t
+  pushTarget ∷ c → t → m t

@@ -1,6 +1,111 @@
 {
   "workspace": {
     "packages": {
+      "fetch-json": {
+        "path": "examples/fetch-json",
+        "core": {
+          "dependencies": [
+            "aff",
+            "aff-promise",
+            "arraybuffer",
+            "console",
+            "fetch-core",
+            "http-methods",
+            "js-promise-aff",
+            "js-timers",
+            "jsinc",
+            "web-chain",
+            "web-encoding",
+            "web-streams"
+          ],
+          "build_plan": [
+            "aff",
+            "aff-promise",
+            "argonaut",
+            "argonaut-codecs",
+            "argonaut-core",
+            "argonaut-traversals",
+            "arraybuffer",
+            "arraybuffer-types",
+            "arrays",
+            "bifunctors",
+            "console",
+            "const",
+            "contravariant",
+            "control",
+            "datetime",
+            "distributive",
+            "effect",
+            "either",
+            "enums",
+            "exceptions",
+            "exists",
+            "fetch-core",
+            "float32",
+            "foldable-traversable",
+            "foreign",
+            "foreign-object",
+            "functions",
+            "functors",
+            "gen",
+            "http-methods",
+            "identity",
+            "integers",
+            "invariant",
+            "js-date",
+            "js-promise",
+            "js-promise-aff",
+            "js-timers",
+            "jsinc",
+            "lazy",
+            "lists",
+            "maybe",
+            "media-types",
+            "newtype",
+            "nonempty",
+            "now",
+            "nullable",
+            "numbers",
+            "ordered-collections",
+            "orders",
+            "parallel",
+            "partial",
+            "prelude",
+            "profunctor",
+            "profunctor-lenses",
+            "record",
+            "refs",
+            "safe-coerce",
+            "st",
+            "strings",
+            "tailrec",
+            "transformers",
+            "tuples",
+            "type-equality",
+            "typelevel-prelude",
+            "uint",
+            "unfoldable",
+            "unicode",
+            "unordered-collections",
+            "unsafe-coerce",
+            "unsafe-reference",
+            "web-chain",
+            "web-cssom",
+            "web-dom",
+            "web-encoding",
+            "web-events",
+            "web-file",
+            "web-html",
+            "web-storage",
+            "web-streams",
+            "web-uievents"
+          ]
+        },
+        "test": {
+          "dependencies": [],
+          "build_plan": []
+        }
+      },
       "jsinc": {
         "path": "./",
         "core": {
@@ -844,7 +949,12 @@
         "zipperarray": "2.0.0"
       }
     },
-    "extra_packages": {}
+    "extra_packages": {
+      "web-chain": {
+        "git": "https://github.com/david-sledge/purescript-web-chain.git",
+        "ref": "074d931a0abebc05ce2aa70ffc9197224d94be89"
+      }
+    }
   },
   "packages": {
     "aff": {
@@ -941,6 +1051,25 @@
         "argonaut-codecs",
         "argonaut-core",
         "profunctor-lenses"
+      ]
+    },
+    "arraybuffer": {
+      "type": "registry",
+      "version": "13.2.0",
+      "integrity": "sha256-WPYcYUR+RCUx+Mnccz1Irg1ryvA7pE6OqpkBlqpCqk0=",
+      "dependencies": [
+        "arraybuffer-types",
+        "arrays",
+        "effect",
+        "float32",
+        "functions",
+        "gen",
+        "maybe",
+        "nullable",
+        "prelude",
+        "tailrec",
+        "uint",
+        "unfoldable"
       ]
     },
     "arraybuffer-types": {
@@ -1187,6 +1316,16 @@
         "web-streams"
       ]
     },
+    "float32": {
+      "type": "registry",
+      "version": "2.0.0",
+      "integrity": "sha256-lO8pshPBj5ExM+/ZjZ8nXVltb37XGJdRP8vakl0LBTE=",
+      "dependencies": [
+        "gen",
+        "maybe",
+        "prelude"
+      ]
+    },
     "foldable-traversable": {
       "type": "registry",
       "version": "6.0.0",
@@ -1354,6 +1493,19 @@
         "prelude"
       ]
     },
+    "js-date": {
+      "type": "registry",
+      "version": "8.0.0",
+      "integrity": "sha256-DNQrp4xYc8o80jtxo0aOkUeXGi6h0Xidkk2ZQ8Y4l5Y=",
+      "dependencies": [
+        "datetime",
+        "effect",
+        "exceptions",
+        "foreign",
+        "integers",
+        "now"
+      ]
+    },
     "js-promise": {
       "type": "registry",
       "version": "1.0.0",
@@ -1365,6 +1517,24 @@
         "functions",
         "maybe",
         "prelude"
+      ]
+    },
+    "js-promise-aff": {
+      "type": "registry",
+      "version": "1.0.0",
+      "integrity": "sha256-gEKAdNnTWjXS+tTp/AhYl/ezloKfuoQFcBKrdOx2USo=",
+      "dependencies": [
+        "aff",
+        "foreign",
+        "js-promise"
+      ]
+    },
+    "js-timers": {
+      "type": "registry",
+      "version": "6.1.0",
+      "integrity": "sha256-mYEL4zjFOzrDeVCnR9Hg3pcZaBZilB6zPGaZ4fzRmzg=",
+      "dependencies": [
+        "effect"
       ]
     },
     "lazy": {
@@ -1747,6 +1917,19 @@
         "type-equality"
       ]
     },
+    "uint": {
+      "type": "registry",
+      "version": "7.0.0",
+      "integrity": "sha256-MCTYyDPFLoNLweSY1oEjKKo0xhqCGrAbiBQNdva1B3w=",
+      "dependencies": [
+        "effect",
+        "enums",
+        "gen",
+        "maybe",
+        "numbers",
+        "prelude"
+      ]
+    },
     "unfoldable": {
       "type": "registry",
       "version": "6.0.0",
@@ -1769,11 +1952,72 @@
         "strings"
       ]
     },
+    "unordered-collections": {
+      "type": "registry",
+      "version": "3.1.0",
+      "integrity": "sha256-Q8jihSbzZXA57cEDVlwDHsNaDPJHPHkCLXklOn+FhdM=",
+      "dependencies": [
+        "arrays",
+        "enums",
+        "functions",
+        "integers",
+        "lists",
+        "prelude",
+        "record",
+        "tuples",
+        "typelevel-prelude",
+        "unfoldable"
+      ]
+    },
     "unsafe-coerce": {
       "type": "registry",
       "version": "6.0.0",
       "integrity": "sha256-0L1QsaY20OILjfU5TV72d3U/tSjhmL9hJ32WMp857Lk=",
       "dependencies": []
+    },
+    "unsafe-reference": {
+      "type": "registry",
+      "version": "5.0.0",
+      "integrity": "sha256-ttSJTQUnK8AK2eGOsfRxLUJEDPL6pnmExjbiOqfwC6I=",
+      "dependencies": [
+        "prelude"
+      ]
+    },
+    "web-chain": {
+      "type": "git",
+      "url": "https://github.com/david-sledge/purescript-web-chain.git",
+      "rev": "074d931a0abebc05ce2aa70ffc9197224d94be89",
+      "dependencies": [
+        "arrays",
+        "effect",
+        "either",
+        "exceptions",
+        "foldable-traversable",
+        "integers",
+        "lists",
+        "maybe",
+        "numbers",
+        "prelude",
+        "st",
+        "tuples",
+        "unordered-collections",
+        "unsafe-coerce",
+        "unsafe-reference",
+        "web-cssom",
+        "web-dom",
+        "web-events",
+        "web-html"
+      ]
+    },
+    "web-cssom": {
+      "type": "registry",
+      "version": "2.0.0",
+      "integrity": "sha256-kkLMzG8a3bmg7Zdehhr/sxhev/XLDG2ga59JewXgo5M=",
+      "dependencies": [
+        "web-dom",
+        "web-html",
+        "web-uievents"
+      ]
     },
     "web-dom": {
       "type": "registry",
@@ -1815,6 +2059,26 @@
         "web-dom"
       ]
     },
+    "web-html": {
+      "type": "registry",
+      "version": "4.1.1",
+      "integrity": "sha256-yOuZJGUxFrivHKpo/jKuKzFZaq6PPPE64ftSysXFssk=",
+      "dependencies": [
+        "js-date",
+        "web-dom",
+        "web-file",
+        "web-storage"
+      ]
+    },
+    "web-storage": {
+      "type": "registry",
+      "version": "5.0.0",
+      "integrity": "sha256-YJfos55oeKtBStNfoWfeflSy8j+4IDym5eaZtIY7YM4=",
+      "dependencies": [
+        "nullable",
+        "web-events"
+      ]
+    },
     "web-streams": {
       "type": "registry",
       "version": "4.0.0",
@@ -1827,6 +2091,14 @@
         "nullable",
         "prelude",
         "tuples"
+      ]
+    },
+    "web-uievents": {
+      "type": "registry",
+      "version": "5.0.0",
+      "integrity": "sha256-yh9uVLIGu8wE1+jwLehtfsRfR1eyiShhIMMhBPqKybE=",
+      "dependencies": [
+        "web-html"
       ]
     }
   }
