@@ -1,13 +1,9 @@
 workspace:
-  extraPackages:
-    web-chain:
-      git: https://github.com/david-sledge/purescript-web-chain.git
-      ref: 074d931a0abebc05ce2aa70ffc9197224d94be89
   packageSet:
-    registry: 75.2.1
+    registry: 75.4.0
 package:
   dependencies:
-    - aff: ">=7.0.0 <9.0.0"
+    - aff: ">=8.0.0 <9.0.0"
     - aff-promise: ">=4.0.0 <5.0.0"
     - argonaut: ">=9.0.0 <10.0.0"
     - arrays: ">=7.3.0 <8.0.0"
@@ -40,7 +36,7 @@ package:
       - assert
       - debug
   publish:
-    version: 0.5.0
+    version: 0.5.1
     license: MIT
     exclude:
       - "examples/**"
